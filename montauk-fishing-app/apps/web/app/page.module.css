@@ -1,0 +1,355 @@
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  min-height: 100vh;
+}
+
+.mapPane {
+  position: relative;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+}
+
+.mapGrid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.45));
+}
+
+.contourA,
+.contourB,
+.contourC {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 55% 45% 60% 40%;
+}
+
+.contourA {
+  inset: 12% 18% 34% 14%;
+}
+
+.contourB {
+  inset: 30% 8% 14% 28%;
+}
+
+.contourC {
+  inset: 8% 34% 44% 42%;
+}
+
+.shelfBand {
+  position: absolute;
+  inset: auto -8% 12% 10%;
+  height: 28%;
+  background: linear-gradient(90deg, rgba(255, 212, 122, 0.08), rgba(255, 142, 126, 0.16), rgba(102, 240, 201, 0.08));
+  transform: rotate(-7deg);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hud {
+  position: absolute;
+  inset: 24px 24px auto 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.brand {
+  max-width: 400px;
+  padding: 18px 20px;
+  background: rgba(4, 16, 25, 0.62);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(18px);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 0.77rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  line-height: 0.98;
+}
+
+.subtitle {
+  margin: 12px 0 0;
+  color: var(--muted);
+  max-width: 56ch;
+}
+
+.legend {
+  min-width: 190px;
+  padding: 16px;
+  background: rgba(4, 16, 25, 0.62);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(18px);
+}
+
+.legendTitle {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.legendList {
+  display: grid;
+  gap: 10px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #dde8ef;
+  font-size: 0.95rem;
+}
+
+.legendSwatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+}
+
+.zonesLayer {
+  position: absolute;
+  inset: 0;
+}
+
+.zoneCard {
+  position: absolute;
+  width: 180px;
+  padding: 12px 14px;
+  background: rgba(6, 20, 31, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+}
+
+.zoneDot {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(102, 240, 201, 0.12);
+}
+
+.zoneName {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.zoneMeta {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.zoneSummary {
+  margin: 10px 0 0;
+  font-size: 0.9rem;
+  color: #edf7fb;
+}
+
+.panel {
+  padding: 24px;
+  background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+  backdrop-filter: blur(22px);
+  overflow-y: auto;
+}
+
+.panelSection + .panelSection {
+  margin-top: 24px;
+}
+
+.panelHeading {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.controlGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.controlCard {
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.83rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.input,
+.select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(4, 13, 20, 0.72);
+  color: var(--text);
+}
+
+.featuredZone {
+  padding: 18px;
+  border: 1px solid rgba(102, 240, 201, 0.28);
+  background: linear-gradient(180deg, rgba(102, 240, 201, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.featuredTitle {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.featuredStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.stat {
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.statLabel {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.statValue {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.listItem {
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.listTitleRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.listTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.listTag {
+  color: var(--warning);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.listMeta {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.listText {
+  margin: 8px 0 0;
+  color: #ebf1f4;
+  font-size: 0.92rem;
+}
+
+.pillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pill {
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e8f6f4;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.statusRow {
+  display: grid;
+  gap: 10px;
+}
+
+.statusCard {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.statusTitle {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.statusText {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 1100px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .mapPane {
+    min-height: 68vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hud {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .panel {
+    padding: 18px;
+  }
+
+  .zoneCard {
+    width: 150px;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "montauk-fishing-app",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @montauk/web",
+    "build:web": "npm run build --workspace @montauk/web",
+    "lint:web": "npm run lint --workspace @montauk/web"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
