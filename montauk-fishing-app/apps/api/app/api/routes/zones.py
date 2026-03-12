@@ -1,12 +1,11 @@
-﻿from datetime import date
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import DbSession
+from app.api.deps import ZonesServiceDep
 from app.config import get_settings
-from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.schemas import RankedZone
-from app.zone_ranking import SpeciesConfigNotFoundError, ZoneRankingService
+from app.services.zones import SpeciesConfigNotFoundError
 
 router = APIRouter(tags=["zones"])
 settings = get_settings()
@@ -14,17 +13,12 @@ settings = get_settings()
 
 @router.get("/zones", response_model=list[RankedZone])
 def list_zones(
-    session: DbSession,
+    zones_service: ZonesServiceDep,
     date_value: date = Query(alias="date"),
     species: str = Query(pattern="^(bluefin|yellowfin|mahi)$"),
 ) -> list[RankedZone]:
-    ranking_service = ZoneRankingService(
-        zone_repository=ZoneRepository(session),
-        species_config_repository=SpeciesConfigRepository(session),
-    )
-
     try:
-        return ranking_service.rank_zones(
+        return zones_service.list_ranked_zones(
             species=species,
             trip_date=date_value,
             limit=settings.default_zone_limit,

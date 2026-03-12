@@ -117,6 +117,18 @@ Species scoring configs are stored in Postgres and seeded on API startup. Each z
 
 The backend seeds Montauk offshore waters including Hudson Edge East, Cartwright Corner, Cox Ledges South, Butterfish Hole, and The Dip North.
 
+## Zones Backend Flow
+
+`GET /zones` now runs through a dedicated service layer:
+
+- route handler validates query params and delegates to `ZonesService`
+- `ZonesService` loads species config and candidate zones from repositories
+- `ZoneEnvironmentalInputService` assembles domain signals for temperature, chlorophyll, current, bathymetry, and weather
+- `ZoneScoringEngine` converts those signals plus species config weights into a score and breakdown
+- response mappers build the stable `RankedZone` schema returned to the frontend
+
+Today the environmental input service still uses seeded placeholder values stored on each zone row. That means SST, chlorophyll, current, bathymetry/structure distance, and weather risk are still mocked even though the scoring path is now ready for live providers.
+
 ## Ingestion Scripts
 
 NOAA CoastWatch ingestion scripts live under [scripts](/C:/Users/miles/OneDrive/Documents/Playground/montauk-fishing-app/scripts). They can fetch SST and chlorophyll subsets by date and bounding box, save raw CSV responses locally, and emit processed JSON that backend code can load through [ingested_products.py](/C:/Users/miles/OneDrive/Documents/Playground/montauk-fishing-app/apps/api/app/ingested_products.py).
