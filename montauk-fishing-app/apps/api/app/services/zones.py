@@ -1,14 +1,19 @@
+import logging
 from datetime import date
 
 from app.db_models import SpeciesScoringConfigModel, ZoneModel
 from app.environmental_inputs import (
     EnvironmentalInputProvider,
+    ResolvedZoneEnvironmentalInputs,
     ZoneEnvironmentalInputService,
     ZoneEnvironmentalSignals,
+    ZoneEnvironmentalSourceMetadata,
 )
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.scoring import ScoreResult, ZoneScoringEngine, build_weighted_score_config
 from app.schemas import RankedZone, SpeciesConfig, ZoneCenter
+
+logger = logging.getLogger(__name__)
 
 
 class SpeciesConfigNotFoundError(ValueError):
@@ -53,9 +58,35 @@ class ZonesService:
         species: str,
         trip_date: date,
     ) -> RankedZone:
-        signals = self.environmental_input_provider.get_zone_signals(zone, trip_date)
-        score_result = self.scoring_engine.score(signals, config, trip_date)
-        return build_ranked_zone(zone, signals, species, trip_date, score_result)
+        resolved_inputs = self._resolve_zone_inputs(zone, trip_date)
+        score_result = self.scoring_engine.score(resolved_inputs.signals, config, trip_date)
+        logger.info(
+            "Resolved zone environmental sources",
+            extra={
+                "zone_id": zone.id,
+                "trip_date": trip_date.isoformat(),
+                "sst_source": resolved_inputs.metadata.sst_source,
+                "chlorophyll_source": resolved_inputs.metadata.chlorophyll_source,
+                "current_source": resolved_inputs.metadata.current_source,
+                "bathymetry_source": resolved_inputs.metadata.bathymetry_source,
+                "weather_source": resolved_inputs.metadata.weather_source,
+            },
+        )
+        return build_ranked_zone(zone, resolved_inputs.signals, species, trip_date, score_result)
+
+    def _resolve_zone_inputs(self, zone: ZoneModel, trip_date: date) -> ResolvedZoneEnvironmentalInputs:
+        if hasattr(self.environmental_input_provider, "resolve_zone_inputs"):
+            return self.environmental_input_provider.resolve_zone_inputs(zone, trip_date)
+        return ResolvedZoneEnvironmentalInputs(
+            signals=self.environmental_input_provider.get_zone_signals(zone, trip_date),
+            metadata=ZoneEnvironmentalSourceMetadata(
+                sst_source="unknown",
+                chlorophyll_source="unknown",
+                current_source="unknown",
+                bathymetry_source="unknown",
+                weather_source="unknown",
+            ),
+        )
 
 
 def build_ranked_zone(

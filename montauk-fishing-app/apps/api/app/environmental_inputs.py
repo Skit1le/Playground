@@ -3,6 +3,7 @@ from datetime import date
 import logging
 from typing import Protocol
 
+from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllProvider
 from app.db_models import ZoneModel
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS
 from app.sst_provider import SstDataUnavailableError, SstProvider
@@ -45,6 +46,21 @@ class ZoneEnvironmentalSignals:
     current_speed_kts: float
     current_break_index: float
     weather_risk_index: float
+
+
+@dataclass(frozen=True)
+class ZoneEnvironmentalSourceMetadata:
+    sst_source: str
+    chlorophyll_source: str
+    current_source: str
+    bathymetry_source: str
+    weather_source: str
+
+
+@dataclass(frozen=True)
+class ResolvedZoneEnvironmentalInputs:
+    signals: ZoneEnvironmentalSignals
+    metadata: ZoneEnvironmentalSourceMetadata
 
 
 class TemperatureSource(Protocol):
@@ -106,6 +122,8 @@ class MockZoneEnvironmentalSignalStore:
 
 
 class SeededTemperatureSource:
+    source_name = "mock"
+
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
 
@@ -118,6 +136,8 @@ class SeededTemperatureSource:
 
 
 class SstBackedTemperatureSource:
+    source_name = "processed"
+
     def __init__(self, sst_provider: SstProvider):
         self.sst_provider = sst_provider
 
@@ -138,16 +158,20 @@ class FallbackTemperatureSource:
     def __init__(self, primary: TemperatureSource, fallback: TemperatureSource):
         self.primary = primary
         self.fallback = fallback
+        self.last_source_name = getattr(fallback, "source_name", "mock")
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         try:
-            return self.primary.get_temperature(zone, trip_date)
+            temperature = self.primary.get_temperature(zone, trip_date)
+            self.last_source_name = getattr(self.primary, "source_name", "processed")
+            return temperature
         except SstDataUnavailableError:
             logger.warning(
                 "Falling back to mock SST signals for zone '%s' on %s because live SST data was unavailable.",
                 zone.id,
                 trip_date.isoformat(),
             )
+            self.last_source_name = getattr(self.fallback, "source_name", "mock")
             return self.fallback.get_temperature(zone, trip_date)
         except Exception:
             logger.exception(
@@ -155,10 +179,13 @@ class FallbackTemperatureSource:
                 zone.id,
                 trip_date.isoformat(),
             )
+            self.last_source_name = getattr(self.fallback, "source_name", "mock")
             return self.fallback.get_temperature(zone, trip_date)
 
 
 class SeededBathymetrySource:
+    source_name = "mock"
+
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
 
@@ -168,6 +195,8 @@ class SeededBathymetrySource:
 
 
 class SeededChlorophyllSource:
+    source_name = "mock"
+
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
 
@@ -176,7 +205,54 @@ class SeededChlorophyllSource:
         return ChlorophyllSignals(chlorophyll_mg_m3=signals.chlorophyll_mg_m3)
 
 
+class ChlorophyllBackedSource:
+    source_name = "processed"
+
+    def __init__(self, chlorophyll_provider: ChlorophyllProvider):
+        self.chlorophyll_provider = chlorophyll_provider
+
+    def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
+        observation = self.chlorophyll_provider.get_zone_chlorophyll(
+            zone_id=zone.id,
+            latitude=zone.center_lat,
+            longitude=zone.center_lng,
+            trip_date=trip_date,
+        )
+        return ChlorophyllSignals(chlorophyll_mg_m3=observation.chlorophyll_mg_m3)
+
+
+class FallbackChlorophyllSource:
+    def __init__(self, primary: ChlorophyllSource, fallback: ChlorophyllSource):
+        self.primary = primary
+        self.fallback = fallback
+        self.last_source_name = getattr(fallback, "source_name", "mock")
+
+    def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
+        try:
+            chlorophyll = self.primary.get_chlorophyll(zone, trip_date)
+            self.last_source_name = getattr(self.primary, "source_name", "processed")
+            return chlorophyll
+        except ChlorophyllDataUnavailableError:
+            logger.warning(
+                "Falling back to mock chlorophyll signals for zone '%s' on %s because live chlorophyll data was unavailable.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            self.last_source_name = getattr(self.fallback, "source_name", "mock")
+            return self.fallback.get_chlorophyll(zone, trip_date)
+        except Exception:
+            logger.exception(
+                "Unexpected chlorophyll provider failure for zone '%s' on %s. Falling back to mock chlorophyll signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            self.last_source_name = getattr(self.fallback, "source_name", "mock")
+            return self.fallback.get_chlorophyll(zone, trip_date)
+
+
 class SeededCurrentSource:
+    source_name = "mock"
+
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
 
@@ -189,6 +265,8 @@ class SeededCurrentSource:
 
 
 class SeededWeatherSource:
+    source_name = "mock"
+
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
 
@@ -200,9 +278,9 @@ class SeededWeatherSource:
 class ZoneEnvironmentalInputService:
     """Composes zone signals from domain-specific data sources.
 
-    Defaults read SST through a provider with fallback to the mock signal store, while the
-    remaining signals still come from seeded placeholder values. The service can swap in real
-    SST, chlorophyll, current, bathymetry, and weather providers one
+    Defaults read SST and chlorophyll through provider-backed paths with fallback to the mock
+    signal store, while the remaining signals still come from seeded placeholder values. The
+    service can swap in real SST, chlorophyll, current, bathymetry, and weather providers one
     domain at a time without changing route handlers or scoring logic.
     """
 
@@ -223,20 +301,40 @@ class ZoneEnvironmentalInputService:
         self.weather_source = weather_source or SeededWeatherSource(signal_store)
 
     def get_zone_signals(self, zone: ZoneModel, trip_date: date) -> ZoneEnvironmentalSignals:
+        return self.resolve_zone_inputs(zone, trip_date).signals
+
+    def resolve_zone_inputs(self, zone: ZoneModel, trip_date: date) -> ResolvedZoneEnvironmentalInputs:
         temperature = self.temperature_source.get_temperature(zone, trip_date)
         bathymetry = self.bathymetry_source.get_bathymetry(zone, trip_date)
         chlorophyll = self.chlorophyll_source.get_chlorophyll(zone, trip_date)
         current = self.current_source.get_current(zone, trip_date)
         weather = self.weather_source.get_weather(zone, trip_date)
 
-        return ZoneEnvironmentalSignals(
-            sea_surface_temp_f=temperature.sea_surface_temp_f,
-            temp_gradient_f_per_nm=temperature.temp_gradient_f_per_nm,
-            structure_distance_nm=bathymetry.structure_distance_nm,
-            chlorophyll_mg_m3=chlorophyll.chlorophyll_mg_m3,
-            current_speed_kts=current.current_speed_kts,
-            current_break_index=current.current_break_index,
-            weather_risk_index=weather.weather_risk_index,
+        return ResolvedZoneEnvironmentalInputs(
+            signals=ZoneEnvironmentalSignals(
+                sea_surface_temp_f=temperature.sea_surface_temp_f,
+                temp_gradient_f_per_nm=temperature.temp_gradient_f_per_nm,
+                structure_distance_nm=bathymetry.structure_distance_nm,
+                chlorophyll_mg_m3=chlorophyll.chlorophyll_mg_m3,
+                current_speed_kts=current.current_speed_kts,
+                current_break_index=current.current_break_index,
+                weather_risk_index=weather.weather_risk_index,
+            ),
+            metadata=ZoneEnvironmentalSourceMetadata(
+                sst_source=getattr(
+                    self.temperature_source,
+                    "last_source_name",
+                    getattr(self.temperature_source, "source_name", "unknown"),
+                ),
+                chlorophyll_source=getattr(
+                    self.chlorophyll_source,
+                    "last_source_name",
+                    getattr(self.chlorophyll_source, "source_name", "unknown"),
+                ),
+                current_source=getattr(self.current_source, "source_name", "unknown"),
+                bathymetry_source=getattr(self.bathymetry_source, "source_name", "unknown"),
+                weather_source=getattr(self.weather_source, "source_name", "unknown"),
+            ),
         )
 
 

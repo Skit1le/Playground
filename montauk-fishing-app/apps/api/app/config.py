@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     sst_bbox_min_lon: float = Field(default=-72.4, alias="SST_BBOX_MIN_LON")
     sst_bbox_max_lon: float = Field(default=-69.8, alias="SST_BBOX_MAX_LON")
     sst_gradient_radius_nm: float = Field(default=18.0, alias="SST_GRADIENT_RADIUS_NM")
+    chlorophyll_bbox_min_lat: float = Field(default=39.8, alias="CHLOROPHYLL_BBOX_MIN_LAT")
+    chlorophyll_bbox_max_lat: float = Field(default=41.4, alias="CHLOROPHYLL_BBOX_MAX_LAT")
+    chlorophyll_bbox_min_lon: float = Field(default=-72.4, alias="CHLOROPHYLL_BBOX_MIN_LON")
+    chlorophyll_bbox_max_lon: float = Field(default=-69.8, alias="CHLOROPHYLL_BBOX_MAX_LON")
     allowed_origins_raw: str = Field(
         default="http://localhost:3000",
         alias="ALLOWED_ORIGINS",

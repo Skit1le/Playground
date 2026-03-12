@@ -4,11 +4,15 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.chlorophyll_provider import ProcessedCoastwatchChlorophyllAdapter
 from app.config import get_settings
 from app.db import get_db_session
 from app.environmental_inputs import (
+    ChlorophyllBackedSource,
+    FallbackChlorophyllSource,
     FallbackTemperatureSource,
     MockZoneEnvironmentalSignalStore,
+    SeededChlorophyllSource,
     SeededTemperatureSource,
     SstBackedTemperatureSource,
     ZoneEnvironmentalInputService,
@@ -31,12 +35,23 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         max_lon=settings.sst_bbox_max_lon,
         gradient_radius_nm=settings.sst_gradient_radius_nm,
     )
+    chlorophyll_provider = ProcessedCoastwatchChlorophyllAdapter(
+        min_lat=settings.chlorophyll_bbox_min_lat,
+        max_lat=settings.chlorophyll_bbox_max_lat,
+        min_lon=settings.chlorophyll_bbox_min_lon,
+        max_lon=settings.chlorophyll_bbox_max_lon,
+    )
     temperature_source = FallbackTemperatureSource(
         primary=SstBackedTemperatureSource(sst_provider),
         fallback=SeededTemperatureSource(signal_store),
     )
+    chlorophyll_source = FallbackChlorophyllSource(
+        primary=ChlorophyllBackedSource(chlorophyll_provider),
+        fallback=SeededChlorophyllSource(signal_store),
+    )
     return ZoneEnvironmentalInputService(
         temperature_source=temperature_source,
+        chlorophyll_source=chlorophyll_source,
         signal_store=signal_store,
     )
 
