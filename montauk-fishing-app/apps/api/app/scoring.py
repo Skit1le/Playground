@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from datetime import date
 
-from app.db_models import SpeciesScoringConfigModel, ZoneModel
-from app.schemas import RankedZone, ScoreBreakdown, SpeciesConfig, WeightedScoreConfig, ZoneCenter
+from app.db_models import SpeciesScoringConfigModel
+from app.environmental_inputs import ZoneEnvironmentalSignals
+from app.schemas import ScoreBreakdown, WeightedScoreConfig
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -41,35 +42,35 @@ class ScoreResult:
     breakdown: ScoreBreakdown
 
 
-class ZoneScoringService:
-    def score_zone(
+class ZoneScoringEngine:
+    def score(
         self,
-        zone: ZoneModel,
+        signals: ZoneEnvironmentalSignals,
         config: SpeciesScoringConfigModel,
         trip_date: date,
     ) -> ScoreResult:
-        weights = self._weights(config)
+        weights = build_weighted_score_config(config)
         temp_suitability = _score_range(
-            zone.sea_surface_temp_f,
+            signals.sea_surface_temp_f,
             config.preferred_temp_min_f,
             config.preferred_temp_max_f,
             tolerance=6.0,
         )
-        temp_gradient = _score_gradient(zone.temp_gradient_f_per_nm)
-        structure_proximity = _score_structure(zone.structure_distance_nm)
+        temp_gradient = _score_gradient(signals.temp_gradient_f_per_nm)
+        structure_proximity = _score_structure(signals.structure_distance_nm)
         chlorophyll_suitability = _score_range(
-            zone.chlorophyll_mg_m3,
+            signals.chlorophyll_mg_m3,
             config.ideal_chlorophyll_min,
             config.ideal_chlorophyll_max,
             tolerance=0.18,
         )
         current_suitability = _score_current(
-            zone.current_speed_kts,
-            zone.current_break_index,
+            signals.current_speed_kts,
+            signals.current_break_index,
             config.ideal_current_min_kts,
             config.ideal_current_max_kts,
         )
-        weather_fishability = _score_weather(zone.weather_risk_index, trip_date)
+        weather_fishability = _score_weather(signals.weather_risk_index, trip_date)
 
         breakdown = ScoreBreakdown(
             temp_suitability=round(temp_suitability * 100, 1),
@@ -91,68 +92,27 @@ class ZoneScoringService:
 
         return ScoreResult(total=round(total * 100, 1), breakdown=breakdown)
 
-    @staticmethod
-    def _weights(config: SpeciesScoringConfigModel) -> WeightedScoreConfig:
-        raw_weights = WeightedScoreConfig(
-            temp_suitability=config.temp_suitability_weight,
-            temp_gradient=config.temp_gradient_weight,
-            structure_proximity=config.structure_proximity_weight,
-            chlorophyll_suitability=config.chlorophyll_suitability_weight,
-            current_suitability=config.current_suitability_weight,
-            weather_fishability=config.weather_fishability_weight,
+
+def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedScoreConfig:
+    raw_weights = WeightedScoreConfig(
+        temp_suitability=config.temp_suitability_weight,
+        temp_gradient=config.temp_gradient_weight,
+        structure_proximity=config.structure_proximity_weight,
+        chlorophyll_suitability=config.chlorophyll_suitability_weight,
+        current_suitability=config.current_suitability_weight,
+        weather_fishability=config.weather_fishability_weight,
+    )
+    total_weight = sum(raw_weights.model_dump().values())
+    if total_weight <= 0:
+        equal_weight = round(1 / 6, 4)
+        return WeightedScoreConfig(
+            temp_suitability=equal_weight,
+            temp_gradient=equal_weight,
+            structure_proximity=equal_weight,
+            chlorophyll_suitability=equal_weight,
+            current_suitability=equal_weight,
+            weather_fishability=equal_weight,
         )
-        total_weight = sum(raw_weights.model_dump().values())
-        if total_weight <= 0:
-            equal_weight = round(1 / 6, 4)
-            return WeightedScoreConfig(
-                temp_suitability=equal_weight,
-                temp_gradient=equal_weight,
-                structure_proximity=equal_weight,
-                chlorophyll_suitability=equal_weight,
-                current_suitability=equal_weight,
-                weather_fishability=equal_weight,
-            )
 
-        normalized = {key: value / total_weight for key, value in raw_weights.model_dump().items()}
-        return WeightedScoreConfig(**normalized)
-
-
-def build_species_config(config: SpeciesScoringConfigModel) -> SpeciesConfig:
-    return SpeciesConfig(
-        species=config.species,
-        label=config.label,
-        season_window=config.season_window,
-        notes=config.notes,
-        preferred_temp_f=[config.preferred_temp_min_f, config.preferred_temp_max_f],
-        ideal_chlorophyll_mg_m3=[config.ideal_chlorophyll_min, config.ideal_chlorophyll_max],
-        ideal_current_kts=[config.ideal_current_min_kts, config.ideal_current_max_kts],
-        weights=ZoneScoringService._weights(config),
-    )
-
-
-def build_ranked_zone(
-    zone: ZoneModel,
-    species: str,
-    trip_date: date,
-    score_result: ScoreResult,
-) -> RankedZone:
-    return RankedZone(
-        id=zone.id,
-        name=zone.name,
-        species=zone.species,
-        distance_nm=zone.distance_nm,
-        center=ZoneCenter(lat=zone.center_lat, lng=zone.center_lng),
-        depth_ft=zone.depth_ft,
-        summary=zone.summary,
-        sea_surface_temp_f=zone.sea_surface_temp_f,
-        temp_gradient_f_per_nm=zone.temp_gradient_f_per_nm,
-        structure_distance_nm=zone.structure_distance_nm,
-        chlorophyll_mg_m3=zone.chlorophyll_mg_m3,
-        current_speed_kts=zone.current_speed_kts,
-        current_break_index=zone.current_break_index,
-        weather_risk_index=zone.weather_risk_index,
-        score=score_result.total,
-        score_breakdown=score_result.breakdown,
-        scored_for_species=species,
-        scored_for_date=trip_date,
-    )
+    normalized = {key: value / total_weight for key, value in raw_weights.model_dump().items()}
+    return WeightedScoreConfig(**normalized)

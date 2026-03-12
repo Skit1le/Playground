@@ -1,7 +1,10 @@
+﻿import logging
 from contextlib import asynccontextmanager
+from time import sleep
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import OperationalError
 
 from app.api.routes.configs import router as configs_router
 from app.api.routes.health import router as health_router
@@ -12,13 +15,35 @@ from app.db import SessionLocal
 from app.seed import initialize_database, seed_database
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def wait_for_database(max_attempts: int = 20, delay_seconds: int = 2) -> None:
+    last_error: OperationalError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            initialize_database()
+            with SessionLocal() as session:
+                seed_database(session)
+            logger.info("Database initialization completed on attempt %s.", attempt)
+            return
+        except OperationalError as exc:
+            last_error = exc
+            logger.warning(
+                "Database not ready on attempt %s/%s. Retrying in %s seconds.",
+                attempt,
+                max_attempts,
+                delay_seconds,
+            )
+            sleep(delay_seconds)
+
+    if last_error is not None:
+        raise last_error
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    initialize_database()
-    with SessionLocal() as session:
-        seed_database(session)
+    wait_for_database()
     yield
 
 

@@ -1,12 +1,12 @@
-from datetime import date
+﻿from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import DbSession
 from app.config import get_settings
 from app.repositories import SpeciesConfigRepository, ZoneRepository
-from app.scoring import ZoneScoringService, build_ranked_zone
 from app.schemas import RankedZone
+from app.zone_ranking import SpeciesConfigNotFoundError, ZoneRankingService
 
 router = APIRouter(tags=["zones"])
 settings = get_settings()
@@ -18,22 +18,19 @@ def list_zones(
     date_value: date = Query(alias="date"),
     species: str = Query(pattern="^(bluefin|yellowfin|mahi)$"),
 ) -> list[RankedZone]:
-    species_repository = SpeciesConfigRepository(session)
-    zone_repository = ZoneRepository(session)
-    scoring_service = ZoneScoringService()
+    ranking_service = ZoneRankingService(
+        zone_repository=ZoneRepository(session),
+        species_config_repository=SpeciesConfigRepository(session),
+    )
 
-    config = species_repository.get_by_species(species)
-    if config is None:
+    try:
+        return ranking_service.rank_zones(
+            species=species,
+            trip_date=date_value,
+            limit=settings.default_zone_limit,
+        )
+    except SpeciesConfigNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No scoring configuration found for species '{species}'.",
-        )
-
-    zones = zone_repository.list_for_species(species)
-    ranked = [
-        build_ranked_zone(zone, species, date_value, scoring_service.score_zone(zone, config, date_value))
-        for zone in zones
-    ]
-
-    ranked.sort(key=lambda zone: zone.score, reverse=True)
-    return ranked[: settings.default_zone_limit]
+            detail=str(exc),
+        ) from exc
