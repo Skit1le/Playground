@@ -129,6 +129,8 @@ The backend seeds Montauk offshore waters including Hudson Edge East, Cartwright
 
 Today the environmental input service still uses seeded placeholder values from a separate mock signal catalog. That means SST, chlorophyll, current, bathymetry/structure distance, and weather risk are still mocked even though the scoring path is now ready for live providers.
 
+SST is now the first signal with a live-data adapter path: the backend will read processed CoastWatch SST files when available, derive nearest-zone temperature and a simple local gradient, cache repeated lookups, and fall back to the mock SST catalog if processed data is unavailable or invalid.
+
 ## Ingestion Scripts
 
 NOAA CoastWatch ingestion scripts live under [scripts](/C:/Users/miles/OneDrive/Documents/Playground/montauk-fishing-app/scripts). They can fetch SST and chlorophyll subsets by date and bounding box, save raw CSV responses locally, and emit processed JSON that backend code can load through [ingested_products.py](/C:/Users/miles/OneDrive/Documents/Playground/montauk-fishing-app/apps/api/app/ingested_products.py).

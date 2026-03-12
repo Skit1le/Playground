@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from datetime import date
+import logging
 from typing import Protocol
 
 from app.db_models import ZoneModel
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS
+from app.sst_provider import SstDataUnavailableError, SstProvider
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class TemperatureSignals:
@@ -114,6 +117,47 @@ class SeededTemperatureSource:
         )
 
 
+class SstBackedTemperatureSource:
+    def __init__(self, sst_provider: SstProvider):
+        self.sst_provider = sst_provider
+
+    def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
+        sst = self.sst_provider.get_zone_sst(
+            zone_id=zone.id,
+            latitude=zone.center_lat,
+            longitude=zone.center_lng,
+            trip_date=trip_date,
+        )
+        return TemperatureSignals(
+            sea_surface_temp_f=sst.sea_surface_temp_f,
+            temp_gradient_f_per_nm=sst.temp_gradient_f_per_nm,
+        )
+
+
+class FallbackTemperatureSource:
+    def __init__(self, primary: TemperatureSource, fallback: TemperatureSource):
+        self.primary = primary
+        self.fallback = fallback
+
+    def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
+        try:
+            return self.primary.get_temperature(zone, trip_date)
+        except SstDataUnavailableError:
+            logger.warning(
+                "Falling back to mock SST signals for zone '%s' on %s because live SST data was unavailable.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            return self.fallback.get_temperature(zone, trip_date)
+        except Exception:
+            logger.exception(
+                "Unexpected SST provider failure for zone '%s' on %s. Falling back to mock SST signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            return self.fallback.get_temperature(zone, trip_date)
+
+
 class SeededBathymetrySource:
     def __init__(self, signal_store: ZoneEnvironmentalSignalStore):
         self.signal_store = signal_store
@@ -156,8 +200,9 @@ class SeededWeatherSource:
 class ZoneEnvironmentalInputService:
     """Composes zone signals from domain-specific data sources.
 
-    Defaults still read seeded placeholder values from the `zones` table, but the service
-    can now swap in real SST, chlorophyll, current, bathymetry, and weather providers one
+    Defaults read SST through a provider with fallback to the mock signal store, while the
+    remaining signals still come from seeded placeholder values. The service can swap in real
+    SST, chlorophyll, current, bathymetry, and weather providers one
     domain at a time without changing route handlers or scoring logic.
     """
 

@@ -2,8 +2,16 @@ import unittest
 from datetime import date
 
 from app.db_models import SpeciesScoringConfigModel, ZoneModel
-from app.environmental_inputs import ZoneEnvironmentalSignals
+from app.environmental_inputs import (
+    FallbackTemperatureSource,
+    MockZoneEnvironmentalSignalStore,
+    SeededTemperatureSource,
+    SstBackedTemperatureSource,
+    ZoneEnvironmentalInputService,
+    ZoneEnvironmentalSignals,
+)
 from app.services.zones import SpeciesConfigNotFoundError, ZonesService
+from app.sst_provider import SstDataUnavailableError, SstObservation
 
 
 class FakeSpeciesConfigRepository:
@@ -48,6 +56,18 @@ class FakeEnvironmentalInputProvider:
             current_break_index=0.45,
             weather_risk_index=0.42,
         )
+
+
+class FakeSstProvider:
+    def __init__(self, observation: SstObservation | Exception):
+        self.observation = observation
+        self.calls: list[tuple[str, date]] = []
+
+    def get_zone_sst(self, zone_id: str, latitude: float, longitude: float, trip_date: date) -> SstObservation:
+        self.calls.append((zone_id, trip_date))
+        if isinstance(self.observation, Exception):
+            raise self.observation
+        return self.observation
 
 
 def make_species_config() -> SpeciesScoringConfigModel:
@@ -164,6 +184,73 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(ranked_zone.current_break_index, 0.91)
         self.assertEqual(ranked_zone.weather_risk_index, 0.12)
 
+    def test_list_ranked_zones_prefers_provider_signals_over_zone_object_values(self) -> None:
+        conflicting_zone = make_zone(
+            zone_id="prime-edge",
+            name="Prime Edge",
+            distance_nm=61,
+        )
+        conflicting_zone.sea_surface_temp_f = 54.2
+        conflicting_zone.temp_gradient_f_per_nm = 0.4
+        conflicting_zone.structure_distance_nm = 5.8
+        conflicting_zone.chlorophyll_mg_m3 = 0.62
+        conflicting_zone.current_speed_kts = 0.3
+        conflicting_zone.current_break_index = 0.08
+        conflicting_zone.weather_risk_index = 0.79
+
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([conflicting_zone]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=FakeEnvironmentalInputProvider(),
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.sea_surface_temp_f, 66.4)
+        self.assertEqual(ranked_zone.temp_gradient_f_per_nm, 2.4)
+        self.assertEqual(ranked_zone.structure_distance_nm, 0.9)
+        self.assertEqual(ranked_zone.chlorophyll_mg_m3, 0.31)
+        self.assertEqual(ranked_zone.current_speed_kts, 1.7)
+        self.assertEqual(ranked_zone.current_break_index, 0.91)
+        self.assertEqual(ranked_zone.weather_risk_index, 0.12)
+
+    def test_list_ranked_zones_uses_provider_supplied_sst_with_mock_non_sst_fields(self) -> None:
+        environmental_input_provider = ZoneEnvironmentalInputService(
+            temperature_source=SstBackedTemperatureSource(
+                FakeSstProvider(
+                    SstObservation(
+                        sea_surface_temp_f=71.2,
+                        temp_gradient_f_per_nm=1.9,
+                    )
+                )
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=environmental_input_provider,
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.sea_surface_temp_f, 71.2)
+        self.assertEqual(ranked_zone.temp_gradient_f_per_nm, 1.9)
+        self.assertEqual(ranked_zone.chlorophyll_mg_m3, 0.27)
+        self.assertEqual(ranked_zone.current_speed_kts, 1.4)
+
     def test_list_ranked_zones_raises_when_species_config_is_missing(self) -> None:
         service = ZonesService(
             zone_repository=FakeZoneRepository([]),
@@ -172,6 +259,36 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         with self.assertRaises(SpeciesConfigNotFoundError):
             service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)
+
+    def test_zone_environmental_input_service_falls_back_when_sst_provider_fails(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            temperature_source=FallbackTemperatureSource(
+                primary=SstBackedTemperatureSource(
+                    FakeSstProvider(SstDataUnavailableError("missing processed SST"))
+                ),
+                fallback=SeededTemperatureSource(signal_store),
+            ),
+            signal_store=signal_store,
+        )
+
+        signals = provider.get_zone_signals(zone, date(2026, 6, 18))
+
+        self.assertEqual(signals.sea_surface_temp_f, 63.5)
+        self.assertEqual(signals.temp_gradient_f_per_nm, 0.9)
 
 
 if __name__ == "__main__":
