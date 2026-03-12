@@ -29,14 +29,24 @@ class FakeZoneRepository:
 
 class FakeEnvironmentalInputProvider:
     def get_zone_signals(self, zone: ZoneModel, trip_date: date) -> ZoneEnvironmentalSignals:
+        if zone.id == "prime-edge":
+            return ZoneEnvironmentalSignals(
+                sea_surface_temp_f=66.4,
+                temp_gradient_f_per_nm=2.4,
+                structure_distance_nm=0.9,
+                chlorophyll_mg_m3=0.31,
+                current_speed_kts=1.7,
+                current_break_index=0.91,
+                weather_risk_index=0.12,
+            )
         return ZoneEnvironmentalSignals(
-            sea_surface_temp_f=66.4,
-            temp_gradient_f_per_nm=2.4,
-            structure_distance_nm=0.9,
-            chlorophyll_mg_m3=0.31,
-            current_speed_kts=1.7,
-            current_break_index=0.91,
-            weather_risk_index=0.12,
+            sea_surface_temp_f=58.0,
+            temp_gradient_f_per_nm=0.8,
+            structure_distance_nm=3.5,
+            chlorophyll_mg_m3=0.48,
+            current_speed_kts=0.9,
+            current_break_index=0.45,
+            weather_risk_index=0.42,
         )
 
 
@@ -66,13 +76,6 @@ def make_zone(
     zone_id: str,
     name: str,
     distance_nm: int,
-    sea_surface_temp_f: float,
-    temp_gradient_f_per_nm: float,
-    structure_distance_nm: float,
-    chlorophyll_mg_m3: float,
-    current_speed_kts: float,
-    current_break_index: float,
-    weather_risk_index: float,
 ) -> ZoneModel:
     return ZoneModel(
         id=zone_id,
@@ -82,13 +85,6 @@ def make_zone(
         center_lat=40.95,
         center_lng=-71.88,
         summary=f"{name} summary",
-        sea_surface_temp_f=sea_surface_temp_f,
-        temp_gradient_f_per_nm=temp_gradient_f_per_nm,
-        structure_distance_nm=structure_distance_nm,
-        chlorophyll_mg_m3=chlorophyll_mg_m3,
-        current_speed_kts=current_speed_kts,
-        current_break_index=current_break_index,
-        weather_risk_index=weather_risk_index,
         depth_ft=240,
     )
 
@@ -102,29 +98,16 @@ class ZonesServiceTestCase(unittest.TestCase):
                         zone_id="cold-edge",
                         name="Cold Edge",
                         distance_nm=52,
-                        sea_surface_temp_f=58.0,
-                        temp_gradient_f_per_nm=0.8,
-                        structure_distance_nm=3.5,
-                        chlorophyll_mg_m3=0.48,
-                        current_speed_kts=0.9,
-                        current_break_index=0.45,
-                        weather_risk_index=0.42,
                     ),
                     make_zone(
                         zone_id="prime-edge",
                         name="Prime Edge",
                         distance_nm=61,
-                        sea_surface_temp_f=65.0,
-                        temp_gradient_f_per_nm=2.1,
-                        structure_distance_nm=1.2,
-                        chlorophyll_mg_m3=0.28,
-                        current_speed_kts=1.6,
-                        current_break_index=0.88,
-                        weather_risk_index=0.14,
                     ),
                 ]
             ),
             species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=FakeEnvironmentalInputProvider(),
         )
 
         ranked_zones = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)
@@ -164,13 +147,6 @@ class ZonesServiceTestCase(unittest.TestCase):
                         zone_id="prime-edge",
                         name="Prime Edge",
                         distance_nm=61,
-                        sea_surface_temp_f=59.0,
-                        temp_gradient_f_per_nm=0.7,
-                        structure_distance_nm=4.1,
-                        chlorophyll_mg_m3=0.47,
-                        current_speed_kts=0.8,
-                        current_break_index=0.33,
-                        weather_risk_index=0.51,
                     )
                 ]
             ),

@@ -55,7 +55,7 @@ SPECIES_SCORING_CONFIGS = [
     },
 ]
 
-ZONES = [
+ZONE_CATALOG = [
     {
         "id": "hudson-edge-east",
         "name": "Hudson Edge East",
@@ -64,13 +64,6 @@ ZONES = [
         "center_lat": 40.94,
         "center_lng": -71.14,
         "summary": "Warm push crossing a canyon edge with strong overnight stability and visible life.",
-        "sea_surface_temp_f": 69.8,
-        "temp_gradient_f_per_nm": 1.6,
-        "structure_distance_nm": 2.4,
-        "chlorophyll_mg_m3": 0.22,
-        "current_speed_kts": 1.8,
-        "current_break_index": 0.87,
-        "weather_risk_index": 0.24,
         "depth_ft": 820,
     },
     {
@@ -81,13 +74,6 @@ ZONES = [
         "center_lat": 40.88,
         "center_lng": -70.72,
         "summary": "Consistent edge water over structure with moderate current and repeat surface activity.",
-        "sea_surface_temp_f": 66.9,
-        "temp_gradient_f_per_nm": 1.3,
-        "structure_distance_nm": 1.7,
-        "chlorophyll_mg_m3": 0.29,
-        "current_speed_kts": 1.5,
-        "current_break_index": 0.81,
-        "weather_risk_index": 0.31,
         "depth_ft": 540,
     },
     {
@@ -98,13 +84,6 @@ ZONES = [
         "center_lat": 40.71,
         "center_lng": -71.43,
         "summary": "Nearshore structure corridor with a tight thermal edge and dependable bait presence.",
-        "sea_surface_temp_f": 65.9,
-        "temp_gradient_f_per_nm": 1.1,
-        "structure_distance_nm": 0.9,
-        "chlorophyll_mg_m3": 0.4,
-        "current_speed_kts": 1.2,
-        "current_break_index": 0.66,
-        "weather_risk_index": 0.18,
         "depth_ft": 390,
     },
     {
@@ -115,13 +94,6 @@ ZONES = [
         "center_lat": 40.83,
         "center_lng": -70.51,
         "summary": "Clean blue water around a warmer edge with floating life and favorable drifts.",
-        "sea_surface_temp_f": 72.1,
-        "temp_gradient_f_per_nm": 1.8,
-        "structure_distance_nm": 3.8,
-        "chlorophyll_mg_m3": 0.16,
-        "current_speed_kts": 2.0,
-        "current_break_index": 0.92,
-        "weather_risk_index": 0.27,
         "depth_ft": 610,
     },
     {
@@ -132,6 +104,48 @@ ZONES = [
         "center_lat": 41.02,
         "center_lng": -70.88,
         "summary": "Offshore seam with strong gradient definition and enough structure influence to hold life.",
+        "depth_ft": 960,
+    },
+]
+
+MOCK_ZONE_ENVIRONMENTAL_SIGNALS = {
+    "hudson-edge-east": {
+        "sea_surface_temp_f": 69.8,
+        "temp_gradient_f_per_nm": 1.6,
+        "structure_distance_nm": 2.4,
+        "chlorophyll_mg_m3": 0.22,
+        "current_speed_kts": 1.8,
+        "current_break_index": 0.87,
+        "weather_risk_index": 0.24,
+    },
+    "cartwright-corner": {
+        "sea_surface_temp_f": 66.9,
+        "temp_gradient_f_per_nm": 1.3,
+        "structure_distance_nm": 1.7,
+        "chlorophyll_mg_m3": 0.29,
+        "current_speed_kts": 1.5,
+        "current_break_index": 0.81,
+        "weather_risk_index": 0.31,
+    },
+    "cox-ledges-south": {
+        "sea_surface_temp_f": 65.9,
+        "temp_gradient_f_per_nm": 1.1,
+        "structure_distance_nm": 0.9,
+        "chlorophyll_mg_m3": 0.4,
+        "current_speed_kts": 1.2,
+        "current_break_index": 0.66,
+        "weather_risk_index": 0.18,
+    },
+    "butterfish-hole": {
+        "sea_surface_temp_f": 72.1,
+        "temp_gradient_f_per_nm": 1.8,
+        "structure_distance_nm": 3.8,
+        "chlorophyll_mg_m3": 0.16,
+        "current_speed_kts": 2.0,
+        "current_break_index": 0.92,
+        "weather_risk_index": 0.27,
+    },
+    "dip-north": {
         "sea_surface_temp_f": 68.4,
         "temp_gradient_f_per_nm": 2.1,
         "structure_distance_nm": 2.1,
@@ -139,9 +153,8 @@ ZONES = [
         "current_speed_kts": 1.9,
         "current_break_index": 0.95,
         "weather_risk_index": 0.36,
-        "depth_ft": 960,
     },
-]
+}
 
 TRIP_LOGS = [
     {
