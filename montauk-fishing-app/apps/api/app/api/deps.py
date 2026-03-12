@@ -14,20 +14,24 @@ from app.environmental_inputs import (
     FallbackChlorophyllSource,
     FallbackCurrentSource,
     FallbackTemperatureSource,
+    FallbackWeatherSource,
     MockZoneEnvironmentalSignalStore,
     CurrentBackedSource,
     SeededBathymetrySource,
     SeededCurrentSource,
     SeededChlorophyllSource,
     SeededTemperatureSource,
+    SeededWeatherSource,
     StructureBackedSource,
     SstBackedTemperatureSource,
+    WeatherBackedSource,
     ZoneEnvironmentalInputService,
 )
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.services.zones import ZonesService
 from app.sst_provider import ProcessedCoastwatchSstAdapter
 from app.structure_provider import ProcessedStructureAdapter
+from app.weather_provider import ProcessedWeatherAdapter
 
 DbSession = Annotated[Session, Depends(get_db_session)]
 
@@ -62,6 +66,12 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         min_lon=settings.structure_bbox_min_lon,
         max_lon=settings.structure_bbox_max_lon,
     )
+    weather_provider = ProcessedWeatherAdapter(
+        min_lat=settings.weather_bbox_min_lat,
+        max_lat=settings.weather_bbox_max_lat,
+        min_lon=settings.weather_bbox_min_lon,
+        max_lon=settings.weather_bbox_max_lon,
+    )
     temperature_source = FallbackTemperatureSource(
         primary=SstBackedTemperatureSource(sst_provider),
         fallback=SeededTemperatureSource(signal_store),
@@ -78,11 +88,16 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         primary=StructureBackedSource(structure_provider),
         fallback=SeededBathymetrySource(signal_store),
     )
+    weather_source = FallbackWeatherSource(
+        primary=WeatherBackedSource(weather_provider),
+        fallback=SeededWeatherSource(signal_store),
+    )
     return ZoneEnvironmentalInputService(
         temperature_source=temperature_source,
         bathymetry_source=bathymetry_source,
         chlorophyll_source=chlorophyll_source,
         current_source=current_source,
+        weather_source=weather_source,
         signal_store=signal_store,
     )
 

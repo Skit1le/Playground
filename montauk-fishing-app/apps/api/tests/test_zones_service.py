@@ -11,19 +11,23 @@ from app.environmental_inputs import (
     FallbackChlorophyllSource,
     FallbackCurrentSource,
     FallbackTemperatureSource,
+    FallbackWeatherSource,
     MockZoneEnvironmentalSignalStore,
     SeededBathymetrySource,
     SeededCurrentSource,
     SeededChlorophyllSource,
     SeededTemperatureSource,
+    SeededWeatherSource,
     SstBackedTemperatureSource,
     StructureBackedSource,
+    WeatherBackedSource,
     ZoneEnvironmentalInputService,
     ZoneEnvironmentalSignals,
 )
 from app.services.zones import SpeciesConfigNotFoundError, ZonesService
 from app.sst_provider import SstDataUnavailableError, SstObservation
 from app.structure_provider import StructureDataUnavailableError, StructureObservation
+from app.weather_provider import WeatherDataUnavailableError, WeatherObservation
 
 
 class FakeSpeciesConfigRepository:
@@ -130,6 +134,24 @@ class FakeStructureProvider:
         longitude: float,
         trip_date: date,
     ) -> StructureObservation:
+        self.calls.append((zone_id, trip_date))
+        if isinstance(self.observation, Exception):
+            raise self.observation
+        return self.observation
+
+
+class FakeWeatherProvider:
+    def __init__(self, observation: WeatherObservation | Exception):
+        self.observation = observation
+        self.calls: list[tuple[str, date]] = []
+
+    def get_zone_weather(
+        self,
+        zone_id: str,
+        latitude: float,
+        longitude: float,
+        trip_date: date,
+    ) -> WeatherObservation:
         self.calls.append((zone_id, trip_date))
         if isinstance(self.observation, Exception):
             raise self.observation
@@ -416,6 +438,37 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(ranked_zone.current_speed_kts, 1.4)
         self.assertEqual(ranked_zone.weather_risk_index, 0.22)
 
+    def test_list_ranked_zones_uses_provider_supplied_weather_with_other_signals_unchanged(self) -> None:
+        environmental_input_provider = ZoneEnvironmentalInputService(
+            weather_source=WeatherBackedSource(
+                FakeWeatherProvider(WeatherObservation(weather_risk_index=0.11))
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=environmental_input_provider,
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.weather_risk_index, 0.11)
+        self.assertEqual(ranked_zone.structure_distance_nm, 2.6)
+        self.assertEqual(ranked_zone.current_speed_kts, 1.4)
+
     def test_list_ranked_zones_raises_when_species_config_is_missing(self) -> None:
         service = ZonesService(
             zone_repository=FakeZoneRepository([]),
@@ -572,6 +625,31 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(resolved.metadata.bathymetry_source, "processed")
         self.assertEqual(resolved.metadata.weather_source, "mock")
 
+    def test_zone_environmental_input_service_exposes_processed_weather_source_metadata(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        provider = ZoneEnvironmentalInputService(
+            weather_source=WeatherBackedSource(
+                FakeWeatherProvider(WeatherObservation(weather_risk_index=0.11))
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.metadata.weather_source, "processed")
+
     def test_zone_environmental_input_service_falls_back_when_chlorophyll_provider_fails(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
         signal_store = MockZoneEnvironmentalSignalStore(
@@ -665,6 +743,37 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         self.assertEqual(signals.structure_distance_nm, 2.6)
         self.assertEqual(resolved.metadata.bathymetry_source, "mock_fallback")
+
+    def test_zone_environmental_input_service_falls_back_when_weather_provider_fails(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            weather_source=FallbackWeatherSource(
+                primary=WeatherBackedSource(
+                    FakeWeatherProvider(WeatherDataUnavailableError("missing processed weather"))
+                ),
+                fallback=SeededWeatherSource(signal_store),
+            ),
+            signal_store=signal_store,
+        )
+
+        signals = provider.get_zone_signals(zone, date(2026, 6, 18))
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(signals.weather_risk_index, 0.22)
+        self.assertEqual(resolved.metadata.weather_source, "mock_fallback")
 
     def test_zone_environmental_input_service_exposes_mock_fallback_sst_metadata(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)

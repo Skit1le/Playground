@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     structure_bbox_max_lat: float = Field(default=41.4, alias="STRUCTURE_BBOX_MAX_LAT")
     structure_bbox_min_lon: float = Field(default=-72.4, alias="STRUCTURE_BBOX_MIN_LON")
     structure_bbox_max_lon: float = Field(default=-69.8, alias="STRUCTURE_BBOX_MAX_LON")
+    weather_bbox_min_lat: float = Field(default=39.8, alias="WEATHER_BBOX_MIN_LAT")
+    weather_bbox_max_lat: float = Field(default=41.4, alias="WEATHER_BBOX_MAX_LAT")
+    weather_bbox_min_lon: float = Field(default=-72.4, alias="WEATHER_BBOX_MIN_LON")
+    weather_bbox_max_lon: float = Field(default=-69.8, alias="WEATHER_BBOX_MAX_LON")
     allowed_origins_raw: str = Field(
         default="http://localhost:3000",
         alias="ALLOWED_ORIGINS",

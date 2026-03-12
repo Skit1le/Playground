@@ -127,7 +127,7 @@ The backend seeds Montauk offshore waters including Hudson Edge East, Cartwright
 - `ZoneScoringEngine` converts those signals plus species config weights into a score and breakdown
 - response mappers build the stable `RankedZone` schema returned to the frontend
 
-Today the environmental input service uses provider-backed SST, chlorophyll, current, and structure paths with fallback to a separate mock signal catalog. Weather risk is still mocked even though the scoring path is now ready for live providers.
+Today the environmental input service uses provider-backed SST, chlorophyll, current, structure, and weather paths with fallback to a separate mock signal catalog. Every field in `ZoneEnvironmentalSignals` now resolves through a processed-or-fallback path.
 
 SST is now the first signal with a live-data adapter path: the backend will read processed CoastWatch SST files when available, derive nearest-zone temperature and a simple local gradient, cache repeated lookups, and fall back to the mock SST catalog if processed data is unavailable or invalid.
 
@@ -137,7 +137,9 @@ Current data now follows the same adapter path: the backend will read processed 
 
 Structure/bathymetry now follows the same adapter path: the backend will read processed structure files when available, use the nearest usable grid point for `structure_distance_nm`, cache repeated lookups, and fall back to the mock structure catalog if processed data is unavailable or invalid.
 
-For provider provenance, the backend tracks source labels such as `processed`, `mock_fallback`, and `unavailable` internally. The chlorophyll adapter currently assumes processed files live under `data/processed/coastwatch/chlorophyll/<date>/...json` and expose a top-level `grid` array of `{ latitude, longitude, value }` points where `value` is already chlorophyll concentration in `mg/m3`. The current adapter makes the same file-layout assumption under `data/processed/coastwatch/current/<date>/...json`, with `value` interpreted as current speed in knots. The structure adapter makes the same file-layout assumption under `data/processed/coastwatch/structure/<date>/...json`, with each positive-value grid point treated as usable structure/edge presence and `structure_distance_nm` derived as the nearest distance from the zone center to any such point.
+Weather now follows the same adapter path: the backend will read processed weather files when available, use the nearest usable grid point for `weather_risk_index`, cache repeated lookups, and fall back to the mock weather catalog if processed data is unavailable or invalid.
+
+For provider provenance, the backend tracks source labels such as `processed`, `mock_fallback`, and `unavailable` internally. The chlorophyll adapter currently assumes processed files live under `data/processed/coastwatch/chlorophyll/<date>/...json` and expose a top-level `grid` array of `{ latitude, longitude, value }` points where `value` is already chlorophyll concentration in `mg/m3`. The current adapter makes the same file-layout assumption under `data/processed/coastwatch/current/<date>/...json`, with `value` interpreted as current speed in knots. The structure adapter makes the same file-layout assumption under `data/processed/coastwatch/structure/<date>/...json`, with each positive-value grid point treated as usable structure/edge presence and `structure_distance_nm` derived as the nearest distance from the zone center to any such point. The weather adapter makes the same file-layout assumption under `data/processed/coastwatch/weather/<date>/...json`, with `value` interpreted as a normalized weather risk score in the `[0, 1]` range.
 
 ## Ingestion Scripts
 

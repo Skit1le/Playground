@@ -9,6 +9,7 @@ from app.db_models import ZoneModel
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS
 from app.structure_provider import StructureDataUnavailableError, StructureProvider
 from app.sst_provider import SstDataUnavailableError, SstProvider
+from app.weather_provider import WeatherDataUnavailableError, WeatherProvider
 
 logger = logging.getLogger(__name__)
 
@@ -410,13 +411,68 @@ class SeededWeatherSource:
         return WeatherSignals(weather_risk_index=signals.weather_risk_index)
 
 
+class WeatherBackedSource:
+    source_name = "processed"
+
+    def __init__(self, weather_provider: WeatherProvider):
+        self.weather_provider = weather_provider
+
+    def get_weather(self, zone: ZoneModel, trip_date: date) -> WeatherSignals:
+        observation = self.weather_provider.get_zone_weather(
+            zone_id=zone.id,
+            latitude=zone.center_lat,
+            longitude=zone.center_lng,
+            trip_date=trip_date,
+        )
+        return WeatherSignals(weather_risk_index=observation.weather_risk_index)
+
+
+class FallbackWeatherSource:
+    def __init__(self, primary: WeatherSource, fallback: WeatherSource):
+        self.primary = primary
+        self.fallback = fallback
+        self.last_source_name = "mock_fallback"
+
+    def get_weather(self, zone: ZoneModel, trip_date: date) -> WeatherSignals:
+        try:
+            weather = self.primary.get_weather(zone, trip_date)
+            self.last_source_name = "processed"
+            return weather
+        except WeatherDataUnavailableError:
+            logger.warning(
+                "Falling back to mock weather signals for zone '%s' on %s because live weather data was unavailable.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                weather = self.fallback.get_weather(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return weather
+        except Exception:
+            logger.exception(
+                "Unexpected weather provider failure for zone '%s' on %s. Falling back to mock weather signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                weather = self.fallback.get_weather(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return weather
+
+
 class ZoneEnvironmentalInputService:
     """Composes zone signals from domain-specific data sources.
 
-    Defaults read SST, chlorophyll, current, and structure through provider-backed paths with
-    fallback to the mock signal store, while weather still comes from seeded placeholder
-    values. The service can swap in real SST, chlorophyll, current, bathymetry, and weather
-    providers one domain at a time without changing route handlers or scoring logic.
+    Defaults read SST, chlorophyll, current, structure, and weather through provider-backed
+    paths with fallback to the mock signal store. The service can swap in real SST,
+    chlorophyll, current, bathymetry, and weather providers one domain at a time without
+    changing route handlers or scoring logic.
     """
 
     def __init__(
@@ -476,7 +532,11 @@ class ZoneEnvironmentalInputService:
                     "last_source_name",
                     getattr(self.bathymetry_source, "source_name", "unknown"),
                 ),
-                weather_source=getattr(self.weather_source, "source_name", "unknown"),
+                weather_source=getattr(
+                    self.weather_source,
+                    "last_source_name",
+                    getattr(self.weather_source, "source_name", "unknown"),
+                ),
             ),
         )
 
