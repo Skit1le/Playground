@@ -6,12 +6,16 @@ from sqlalchemy.orm import Session
 
 from app.chlorophyll_provider import ProcessedCoastwatchChlorophyllAdapter
 from app.config import get_settings
+from app.current_provider import ProcessedCurrentAdapter
 from app.db import get_db_session
 from app.environmental_inputs import (
     ChlorophyllBackedSource,
     FallbackChlorophyllSource,
+    FallbackCurrentSource,
     FallbackTemperatureSource,
     MockZoneEnvironmentalSignalStore,
+    CurrentBackedSource,
+    SeededCurrentSource,
     SeededChlorophyllSource,
     SeededTemperatureSource,
     SstBackedTemperatureSource,
@@ -41,6 +45,13 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         min_lon=settings.chlorophyll_bbox_min_lon,
         max_lon=settings.chlorophyll_bbox_max_lon,
     )
+    current_provider = ProcessedCurrentAdapter(
+        min_lat=settings.current_bbox_min_lat,
+        max_lat=settings.current_bbox_max_lat,
+        min_lon=settings.current_bbox_min_lon,
+        max_lon=settings.current_bbox_max_lon,
+        break_radius_nm=settings.current_break_radius_nm,
+    )
     temperature_source = FallbackTemperatureSource(
         primary=SstBackedTemperatureSource(sst_provider),
         fallback=SeededTemperatureSource(signal_store),
@@ -49,9 +60,14 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         primary=ChlorophyllBackedSource(chlorophyll_provider),
         fallback=SeededChlorophyllSource(signal_store),
     )
+    current_source = FallbackCurrentSource(
+        primary=CurrentBackedSource(current_provider),
+        fallback=SeededCurrentSource(signal_store),
+    )
     return ZoneEnvironmentalInputService(
         temperature_source=temperature_source,
         chlorophyll_source=chlorophyll_source,
+        current_source=current_source,
         signal_store=signal_store,
     )
 

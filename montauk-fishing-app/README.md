@@ -127,11 +127,15 @@ The backend seeds Montauk offshore waters including Hudson Edge East, Cartwright
 - `ZoneScoringEngine` converts those signals plus species config weights into a score and breakdown
 - response mappers build the stable `RankedZone` schema returned to the frontend
 
-Today the environmental input service uses provider-backed SST and chlorophyll paths with fallback to a separate mock signal catalog. Current, bathymetry/structure distance, and weather risk are still mocked even though the scoring path is now ready for live providers.
+Today the environmental input service uses provider-backed SST, chlorophyll, and current paths with fallback to a separate mock signal catalog. Bathymetry/structure distance and weather risk are still mocked even though the scoring path is now ready for live providers.
 
 SST is now the first signal with a live-data adapter path: the backend will read processed CoastWatch SST files when available, derive nearest-zone temperature and a simple local gradient, cache repeated lookups, and fall back to the mock SST catalog if processed data is unavailable or invalid.
 
 Chlorophyll now follows the same adapter path: the backend will read processed CoastWatch chlorophyll files when available, use the nearest usable grid point for `chlorophyll_mg_m3`, cache repeated lookups, and fall back to the mock chlorophyll catalog if processed data is unavailable or invalid.
+
+Current data now follows the same adapter path: the backend will read processed current files when available, use the nearest usable grid point for `current_speed_kts`, derive a simple local `current_break_index`, cache repeated lookups, and fall back to the mock current catalog if processed data is unavailable or invalid.
+
+For provider provenance, the backend tracks source labels such as `processed`, `mock_fallback`, and `unavailable` internally. The chlorophyll adapter currently assumes processed files live under `data/processed/coastwatch/chlorophyll/<date>/...json` and expose a top-level `grid` array of `{ latitude, longitude, value }` points where `value` is already chlorophyll concentration in `mg/m3`. The current adapter makes the same file-layout assumption under `data/processed/coastwatch/current/<date>/...json`, with `value` interpreted as current speed in knots.
 
 ## Ingestion Scripts
 

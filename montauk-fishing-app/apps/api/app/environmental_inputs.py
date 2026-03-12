@@ -4,6 +4,7 @@ import logging
 from typing import Protocol
 
 from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllProvider
+from app.current_provider import CurrentDataUnavailableError, CurrentProvider
 from app.db_models import ZoneModel
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS
 from app.sst_provider import SstDataUnavailableError, SstProvider
@@ -158,12 +159,12 @@ class FallbackTemperatureSource:
     def __init__(self, primary: TemperatureSource, fallback: TemperatureSource):
         self.primary = primary
         self.fallback = fallback
-        self.last_source_name = getattr(fallback, "source_name", "mock")
+        self.last_source_name = "mock_fallback"
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         try:
             temperature = self.primary.get_temperature(zone, trip_date)
-            self.last_source_name = getattr(self.primary, "source_name", "processed")
+            self.last_source_name = "processed"
             return temperature
         except SstDataUnavailableError:
             logger.warning(
@@ -171,16 +172,26 @@ class FallbackTemperatureSource:
                 zone.id,
                 trip_date.isoformat(),
             )
-            self.last_source_name = getattr(self.fallback, "source_name", "mock")
-            return self.fallback.get_temperature(zone, trip_date)
+            try:
+                temperature = self.fallback.get_temperature(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return temperature
         except Exception:
             logger.exception(
                 "Unexpected SST provider failure for zone '%s' on %s. Falling back to mock SST signals.",
                 zone.id,
                 trip_date.isoformat(),
             )
-            self.last_source_name = getattr(self.fallback, "source_name", "mock")
-            return self.fallback.get_temperature(zone, trip_date)
+            try:
+                temperature = self.fallback.get_temperature(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return temperature
 
 
 class SeededBathymetrySource:
@@ -225,12 +236,12 @@ class FallbackChlorophyllSource:
     def __init__(self, primary: ChlorophyllSource, fallback: ChlorophyllSource):
         self.primary = primary
         self.fallback = fallback
-        self.last_source_name = getattr(fallback, "source_name", "mock")
+        self.last_source_name = "mock_fallback"
 
     def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
         try:
             chlorophyll = self.primary.get_chlorophyll(zone, trip_date)
-            self.last_source_name = getattr(self.primary, "source_name", "processed")
+            self.last_source_name = "processed"
             return chlorophyll
         except ChlorophyllDataUnavailableError:
             logger.warning(
@@ -238,16 +249,26 @@ class FallbackChlorophyllSource:
                 zone.id,
                 trip_date.isoformat(),
             )
-            self.last_source_name = getattr(self.fallback, "source_name", "mock")
-            return self.fallback.get_chlorophyll(zone, trip_date)
+            try:
+                chlorophyll = self.fallback.get_chlorophyll(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return chlorophyll
         except Exception:
             logger.exception(
                 "Unexpected chlorophyll provider failure for zone '%s' on %s. Falling back to mock chlorophyll signals.",
                 zone.id,
                 trip_date.isoformat(),
             )
-            self.last_source_name = getattr(self.fallback, "source_name", "mock")
-            return self.fallback.get_chlorophyll(zone, trip_date)
+            try:
+                chlorophyll = self.fallback.get_chlorophyll(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return chlorophyll
 
 
 class SeededCurrentSource:
@@ -264,6 +285,64 @@ class SeededCurrentSource:
         )
 
 
+class CurrentBackedSource:
+    source_name = "processed"
+
+    def __init__(self, current_provider: CurrentProvider):
+        self.current_provider = current_provider
+
+    def get_current(self, zone: ZoneModel, trip_date: date) -> CurrentSignals:
+        observation = self.current_provider.get_zone_current(
+            zone_id=zone.id,
+            latitude=zone.center_lat,
+            longitude=zone.center_lng,
+            trip_date=trip_date,
+        )
+        return CurrentSignals(
+            current_speed_kts=observation.current_speed_kts,
+            current_break_index=observation.current_break_index,
+        )
+
+
+class FallbackCurrentSource:
+    def __init__(self, primary: CurrentSource, fallback: CurrentSource):
+        self.primary = primary
+        self.fallback = fallback
+        self.last_source_name = "mock_fallback"
+
+    def get_current(self, zone: ZoneModel, trip_date: date) -> CurrentSignals:
+        try:
+            current = self.primary.get_current(zone, trip_date)
+            self.last_source_name = "processed"
+            return current
+        except CurrentDataUnavailableError:
+            logger.warning(
+                "Falling back to mock current signals for zone '%s' on %s because live current data was unavailable.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                current = self.fallback.get_current(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return current
+        except Exception:
+            logger.exception(
+                "Unexpected current provider failure for zone '%s' on %s. Falling back to mock current signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                current = self.fallback.get_current(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return current
+
+
 class SeededWeatherSource:
     source_name = "mock"
 
@@ -278,10 +357,10 @@ class SeededWeatherSource:
 class ZoneEnvironmentalInputService:
     """Composes zone signals from domain-specific data sources.
 
-    Defaults read SST and chlorophyll through provider-backed paths with fallback to the mock
-    signal store, while the remaining signals still come from seeded placeholder values. The
-    service can swap in real SST, chlorophyll, current, bathymetry, and weather providers one
-    domain at a time without changing route handlers or scoring logic.
+    Defaults read SST, chlorophyll, and current through provider-backed paths with fallback to
+    the mock signal store, while the remaining signals still come from seeded placeholder
+    values. The service can swap in real SST, chlorophyll, current, bathymetry, and weather
+    providers one domain at a time without changing route handlers or scoring logic.
     """
 
     def __init__(
@@ -331,7 +410,11 @@ class ZoneEnvironmentalInputService:
                     "last_source_name",
                     getattr(self.chlorophyll_source, "source_name", "unknown"),
                 ),
-                current_source=getattr(self.current_source, "source_name", "unknown"),
+                current_source=getattr(
+                    self.current_source,
+                    "last_source_name",
+                    getattr(self.current_source, "source_name", "unknown"),
+                ),
                 bathymetry_source=getattr(self.bathymetry_source, "source_name", "unknown"),
                 weather_source=getattr(self.weather_source, "source_name", "unknown"),
             ),
