@@ -1,9 +1,7 @@
-from sqlalchemy import text
-
 from fastapi import APIRouter
 
-from app.api.deps import DbSession
 from app.config import get_settings
+from app.db import database_is_available
 from app.schemas import HealthResponse
 
 router = APIRouter(tags=["health"])
@@ -11,11 +9,8 @@ settings = get_settings()
 
 
 @router.get("/health", response_model=HealthResponse)
-def healthcheck(session: DbSession) -> HealthResponse:
-    database_status = "missing"
-    if settings.database_url:
-        session.execute(text("SELECT 1"))
-        database_status = "ok"
+def healthcheck() -> HealthResponse:
+    database_status = "ok" if settings.database_url and database_is_available() else "unavailable"
 
     return HealthResponse(
         status="ok",

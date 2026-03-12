@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     app_name: str = "Montauk Fishing API"
     api_env: str = "development"
     database_url: str = "postgresql://montauk:montauk@localhost:5432/montauk"
+    database_connect_timeout_seconds: int = Field(default=1, alias="DATABASE_CONNECT_TIMEOUT_SECONDS")
     default_zone_limit: int = 10
+    database_required_on_startup: bool = Field(default=False, alias="DATABASE_REQUIRED_ON_STARTUP")
+    database_startup_max_attempts: int = Field(default=3, alias="DATABASE_STARTUP_MAX_ATTEMPTS")
+    database_startup_delay_seconds: int = Field(default=1, alias="DATABASE_STARTUP_DELAY_SECONDS")
     processed_lookup_timeout_seconds: float = Field(default=0.75, alias="PROCESSED_LOOKUP_TIMEOUT_SECONDS")
     sst_bbox_min_lat: float = Field(default=39.8, alias="SST_BBOX_MIN_LAT")
     sst_bbox_max_lat: float = Field(default=41.4, alias="SST_BBOX_MAX_LAT")

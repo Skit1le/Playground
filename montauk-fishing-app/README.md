@@ -60,8 +60,8 @@ montauk-fishing-app/
 2. Create and activate a Python virtual environment, then install backend dependencies:
 
    ```powershell
-   python -m venv .venv
-   .venv\Scripts\activate
+   py -3 -m venv apps/api/.venv
+   apps/api/.venv/Scripts/activate
    pip install -r apps/api/requirements.txt
    ```
 
@@ -74,7 +74,21 @@ montauk-fishing-app/
 4. Run the backend:
 
    ```powershell
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir apps/api
+   .\scripts\start_api_windows.ps1
+   ```
+
+   Direct command if the venv `python.exe` launcher is blocked on Windows:
+
+   ```powershell
+   $env:PYTHONPATH="$PWD\apps\api;$PWD\apps\api\.venv\Lib\site-packages"
+   py -3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir apps/api
+   ```
+
+   If `py` is not available, use:
+
+   ```powershell
+   $env:PYTHONPATH="$PWD\apps\api;$PWD\apps\api\.venv\Lib\site-packages"
+   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir apps/api
    ```
 
 5. Run the frontend:
@@ -84,6 +98,10 @@ montauk-fishing-app/
    ```
 
 For local development, prefer `http://127.0.0.1:8000` for the API base URL. The frontend now defaults to that address and shows a clear unavailable message if the API cannot be reached.
+
+The API now also tolerates a missing local Postgres instance in development: startup falls back to seeded in-memory species and zone data after a short retry window, `/health` still responds, and `/zones` plus `/configs/species` can continue serving local mock-backed results.
+
+On Windows, the recommended API startup path is `.\scripts\start_api_windows.ps1`. It avoids relying on `apps/api/.venv/Scripts/python.exe`, which can fail with `Access is denied` on some machines even when the installed packages are fine.
 
 ## Environment Variables
 

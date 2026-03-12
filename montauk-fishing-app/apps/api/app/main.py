@@ -18,7 +18,7 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
-def wait_for_database(max_attempts: int = 20, delay_seconds: int = 2) -> None:
+def wait_for_database(max_attempts: int, delay_seconds: int) -> None:
     last_error: OperationalError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -43,7 +43,17 @@ def wait_for_database(max_attempts: int = 20, delay_seconds: int = 2) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    wait_for_database()
+    try:
+        wait_for_database(
+            max_attempts=settings.database_startup_max_attempts,
+            delay_seconds=settings.database_startup_delay_seconds,
+        )
+    except OperationalError:
+        if settings.database_required_on_startup:
+            raise
+        logger.warning(
+            "Database startup check failed; continuing in degraded local mode with seeded fallbacks."
+        )
     yield
 
 

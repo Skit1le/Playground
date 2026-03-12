@@ -2,6 +2,8 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.chlorophyll_provider import ProcessedCoastwatchChlorophyllAdapter
@@ -27,6 +29,7 @@ from app.environmental_inputs import (
     WeatherBackedSource,
     ZoneEnvironmentalInputService,
 )
+from app.fallback_repositories import InMemorySpeciesConfigRepository, InMemoryZoneRepository
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.services.zones import ZonesService
 from app.sst_provider import ProcessedCoastwatchSstAdapter
@@ -108,9 +111,17 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
 
 
 def get_zones_service(session: DbSession) -> ZonesService:
+    try:
+        session.execute(text("SELECT 1"))
+        zone_repository = ZoneRepository(session)
+        species_config_repository = SpeciesConfigRepository(session)
+    except OperationalError:
+        zone_repository = InMemoryZoneRepository()
+        species_config_repository = InMemorySpeciesConfigRepository()
+
     return ZonesService(
-        zone_repository=ZoneRepository(session),
-        species_config_repository=SpeciesConfigRepository(session),
+        zone_repository=zone_repository,
+        species_config_repository=species_config_repository,
         environmental_input_provider=get_environmental_input_provider(),
     )
 
