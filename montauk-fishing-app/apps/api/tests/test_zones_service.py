@@ -253,12 +253,40 @@ class ZonesServiceTestCase(unittest.TestCase):
                 "weather_risk_index",
                 "score",
                 "score_breakdown",
+                "score_weights",
+                "weighted_score_breakdown",
                 "scored_for_species",
                 "scored_for_date",
             },
         )
         self.assertEqual(ranked_zones[0].scored_for_species, "bluefin")
         self.assertEqual(ranked_zones[0].scored_for_date, date(2026, 6, 18))
+
+    def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=FakeEnvironmentalInputProvider(),
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertAlmostEqual(
+            ranked_zone.score,
+            round(sum(ranked_zone.weighted_score_breakdown.model_dump().values()), 1),
+        )
+        self.assertAlmostEqual(sum(ranked_zone.score_weights.model_dump().values()), 1.0, places=3)
+
+    def test_bluefin_temperature_scoring_is_not_overly_punitive_on_warm_shoulder(self) -> None:
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=FakeEnvironmentalInputProvider(),
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertGreaterEqual(ranked_zone.score_breakdown.temp_suitability, 90.0)
 
     def test_list_ranked_zones_uses_provider_signals_in_response_payload(self) -> None:
         service = ZonesService(

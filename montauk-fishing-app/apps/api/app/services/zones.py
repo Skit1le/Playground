@@ -127,6 +127,8 @@ def build_ranked_zone(
         weather_risk_index=signals.weather_risk_index,
         score=score_result.total,
         score_breakdown=score_result.breakdown,
+        score_weights=score_result.weights,
+        weighted_score_breakdown=score_result.weighted_breakdown,
         scored_for_species=species,
         scored_for_date=trip_date,
     )

@@ -12,10 +12,10 @@ SPECIES_SCORING_CONFIGS = [
         "ideal_current_max_kts": 2.0,
         "temp_suitability_weight": 0.24,
         "temp_gradient_weight": 0.16,
-        "structure_proximity_weight": 0.23,
+        "structure_proximity_weight": 0.18,
         "chlorophyll_suitability_weight": 0.11,
         "current_suitability_weight": 0.13,
-        "weather_fishability_weight": 0.13,
+        "weather_fishability_weight": 0.18,
     },
     {
         "species": "yellowfin",
@@ -30,10 +30,10 @@ SPECIES_SCORING_CONFIGS = [
         "ideal_current_max_kts": 2.3,
         "temp_suitability_weight": 0.27,
         "temp_gradient_weight": 0.2,
-        "structure_proximity_weight": 0.14,
+        "structure_proximity_weight": 0.12,
         "chlorophyll_suitability_weight": 0.14,
         "current_suitability_weight": 0.14,
-        "weather_fishability_weight": 0.11,
+        "weather_fishability_weight": 0.13,
     },
     {
         "species": "mahi",
@@ -48,10 +48,10 @@ SPECIES_SCORING_CONFIGS = [
         "ideal_current_max_kts": 1.9,
         "temp_suitability_weight": 0.29,
         "temp_gradient_weight": 0.16,
-        "structure_proximity_weight": 0.09,
+        "structure_proximity_weight": 0.08,
         "chlorophyll_suitability_weight": 0.18,
         "current_suitability_weight": 0.12,
-        "weather_fishability_weight": 0.16,
+        "weather_fishability_weight": 0.17,
     },
 ]
 

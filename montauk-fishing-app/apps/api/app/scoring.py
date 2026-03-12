@@ -3,7 +3,7 @@ from datetime import date
 
 from app.db_models import SpeciesScoringConfigModel
 from app.environmental_inputs import ZoneEnvironmentalSignals
-from app.schemas import ScoreBreakdown, WeightedScoreConfig
+from app.schemas import ScoreBreakdown, WeightedScoreBreakdown, WeightedScoreConfig
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -16,6 +16,21 @@ def _score_range(value: float, lower: float, upper: float, tolerance: float) -> 
     if value < lower:
         return _clamp(1 - ((lower - value) / tolerance))
     return _clamp(1 - ((value - upper) / tolerance))
+
+
+def _score_temperature(value: float, config: SpeciesScoringConfigModel) -> float:
+    lower_tolerance = 6.0
+    upper_tolerance = 6.0
+
+    if config.species == "bluefin":
+        lower_tolerance = 7.0
+        upper_tolerance = 9.0
+
+    if config.preferred_temp_min_f <= value <= config.preferred_temp_max_f:
+        return 1.0
+    if value < config.preferred_temp_min_f:
+        return _clamp(1 - ((config.preferred_temp_min_f - value) / lower_tolerance))
+    return _clamp(1 - ((value - config.preferred_temp_max_f) / upper_tolerance))
 
 
 def _score_gradient(value: float) -> float:
@@ -40,6 +55,8 @@ def _score_weather(weather_risk_index: float, trip_date: date) -> float:
 class ScoreResult:
     total: float
     breakdown: ScoreBreakdown
+    weights: WeightedScoreConfig
+    weighted_breakdown: WeightedScoreBreakdown
 
 
 class ZoneScoringEngine:
@@ -50,12 +67,7 @@ class ZoneScoringEngine:
         trip_date: date,
     ) -> ScoreResult:
         weights = build_weighted_score_config(config)
-        temp_suitability = _score_range(
-            signals.sea_surface_temp_f,
-            config.preferred_temp_min_f,
-            config.preferred_temp_max_f,
-            tolerance=6.0,
-        )
+        temp_suitability = _score_temperature(signals.sea_surface_temp_f, config)
         temp_gradient = _score_gradient(signals.temp_gradient_f_per_nm)
         structure_proximity = _score_structure(signals.structure_distance_nm)
         chlorophyll_suitability = _score_range(
@@ -80,6 +92,14 @@ class ZoneScoringEngine:
             current_suitability=round(current_suitability * 100, 1),
             weather_fishability=round(weather_fishability * 100, 1),
         )
+        weighted_breakdown = WeightedScoreBreakdown(
+            temp_suitability=round(temp_suitability * weights.temp_suitability * 100, 1),
+            temp_gradient=round(temp_gradient * weights.temp_gradient * 100, 1),
+            structure_proximity=round(structure_proximity * weights.structure_proximity * 100, 1),
+            chlorophyll_suitability=round(chlorophyll_suitability * weights.chlorophyll_suitability * 100, 1),
+            current_suitability=round(current_suitability * weights.current_suitability * 100, 1),
+            weather_fishability=round(weather_fishability * weights.weather_fishability * 100, 1),
+        )
 
         total = (
             temp_suitability * weights.temp_suitability
@@ -90,7 +110,12 @@ class ZoneScoringEngine:
             + weather_fishability * weights.weather_fishability
         )
 
-        return ScoreResult(total=round(total * 100, 1), breakdown=breakdown)
+        return ScoreResult(
+            total=round(total * 100, 1),
+            breakdown=breakdown,
+            weights=weights,
+            weighted_breakdown=weighted_breakdown,
+        )
 
 
 def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedScoreConfig:

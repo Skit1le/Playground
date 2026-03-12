@@ -124,6 +124,8 @@ See [`apps/api/.env.example`](/C:/Users/miles/OneDrive/Documents/Playground/mont
 - `GET /trip-logs`: mock trip history entries
 - `GET /configs/species`: species scoring configs, preferred ranges, and normalized weights
 
+`GET /zones` responses now include both raw `score_breakdown` values and explainability fields: `score_weights` plus `weighted_score_breakdown`, so the final score can be traced back to each weighted contribution.
+
 ## Scoring Engine
 
 Species scoring configs are stored in Postgres and seeded on API startup. Each zone score is a weighted blend of:

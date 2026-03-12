@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import HTTPException
 
 from app.api.routes.zones import list_zones
-from app.schemas import RankedZone, ScoreBreakdown, ZoneCenter
+from app.schemas import RankedZone, ScoreBreakdown, WeightedScoreBreakdown, WeightedScoreConfig, ZoneCenter
 from app.services.zones import SpeciesConfigNotFoundError
 
 
@@ -45,6 +45,22 @@ def make_ranked_zone() -> RankedZone:
             chlorophyll_suitability=100.0,
             current_suitability=96.4,
             weather_fishability=92.0,
+        ),
+        score_weights=WeightedScoreConfig(
+            temp_suitability=0.24,
+            temp_gradient=0.16,
+            structure_proximity=0.18,
+            chlorophyll_suitability=0.11,
+            current_suitability=0.13,
+            weather_fishability=0.18,
+        ),
+        weighted_score_breakdown=WeightedScoreBreakdown(
+            temp_suitability=24.0,
+            temp_gradient=13.4,
+            structure_proximity=14.4,
+            chlorophyll_suitability=11.0,
+            current_suitability=12.5,
+            weather_fishability=16.4,
         ),
         scored_for_species="bluefin",
         scored_for_date=date(2026, 6, 18),

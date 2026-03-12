@@ -33,6 +33,15 @@ class WeightedScoreConfig(BaseModel):
     weather_fishability: float
 
 
+class WeightedScoreBreakdown(BaseModel):
+    temp_suitability: float
+    temp_gradient: float
+    structure_proximity: float
+    chlorophyll_suitability: float
+    current_suitability: float
+    weather_fishability: float
+
+
 class SpeciesConfig(BaseModel):
     species: str
     label: str
@@ -61,6 +70,8 @@ class RankedZone(BaseModel):
     weather_risk_index: float
     score: float
     score_breakdown: ScoreBreakdown
+    score_weights: WeightedScoreConfig
+    weighted_score_breakdown: WeightedScoreBreakdown
     scored_for_species: str
     scored_for_date: date
 
