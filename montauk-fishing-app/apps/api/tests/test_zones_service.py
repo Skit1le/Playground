@@ -7,19 +7,23 @@ from app.db_models import SpeciesScoringConfigModel, ZoneModel
 from app.environmental_inputs import (
     ChlorophyllBackedSource,
     CurrentBackedSource,
+    FallbackBathymetrySource,
     FallbackChlorophyllSource,
     FallbackCurrentSource,
     FallbackTemperatureSource,
     MockZoneEnvironmentalSignalStore,
+    SeededBathymetrySource,
     SeededCurrentSource,
     SeededChlorophyllSource,
     SeededTemperatureSource,
     SstBackedTemperatureSource,
+    StructureBackedSource,
     ZoneEnvironmentalInputService,
     ZoneEnvironmentalSignals,
 )
 from app.services.zones import SpeciesConfigNotFoundError, ZonesService
 from app.sst_provider import SstDataUnavailableError, SstObservation
+from app.structure_provider import StructureDataUnavailableError, StructureObservation
 
 
 class FakeSpeciesConfigRepository:
@@ -108,6 +112,24 @@ class FakeCurrentProvider:
         longitude: float,
         trip_date: date,
     ) -> CurrentObservation:
+        self.calls.append((zone_id, trip_date))
+        if isinstance(self.observation, Exception):
+            raise self.observation
+        return self.observation
+
+
+class FakeStructureProvider:
+    def __init__(self, observation: StructureObservation | Exception):
+        self.observation = observation
+        self.calls: list[tuple[str, date]] = []
+
+    def get_zone_structure(
+        self,
+        zone_id: str,
+        latitude: float,
+        longitude: float,
+        trip_date: date,
+    ) -> StructureObservation:
         self.calls.append((zone_id, trip_date))
         if isinstance(self.observation, Exception):
             raise self.observation
@@ -363,6 +385,37 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(ranked_zone.chlorophyll_mg_m3, 0.27)
         self.assertEqual(ranked_zone.structure_distance_nm, 2.6)
 
+    def test_list_ranked_zones_uses_provider_supplied_structure_with_other_signals_unchanged(self) -> None:
+        environmental_input_provider = ZoneEnvironmentalInputService(
+            bathymetry_source=StructureBackedSource(
+                FakeStructureProvider(StructureObservation(structure_distance_nm=0.45))
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=environmental_input_provider,
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.structure_distance_nm, 0.45)
+        self.assertEqual(ranked_zone.current_speed_kts, 1.4)
+        self.assertEqual(ranked_zone.weather_risk_index, 0.22)
+
     def test_list_ranked_zones_raises_when_species_config_is_missing(self) -> None:
         service = ZonesService(
             zone_repository=FakeZoneRepository([]),
@@ -493,6 +546,32 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(resolved.metadata.chlorophyll_source, "mock")
         self.assertEqual(resolved.metadata.current_source, "processed")
 
+    def test_zone_environmental_input_service_exposes_processed_structure_source_metadata(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        provider = ZoneEnvironmentalInputService(
+            bathymetry_source=StructureBackedSource(
+                FakeStructureProvider(StructureObservation(structure_distance_nm=0.45))
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.metadata.bathymetry_source, "processed")
+        self.assertEqual(resolved.metadata.weather_source, "mock")
+
     def test_zone_environmental_input_service_falls_back_when_chlorophyll_provider_fails(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
         signal_store = MockZoneEnvironmentalSignalStore(
@@ -555,6 +634,37 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(signals.current_speed_kts, 1.4)
         self.assertEqual(signals.current_break_index, 0.73)
         self.assertEqual(resolved.metadata.current_source, "mock_fallback")
+
+    def test_zone_environmental_input_service_falls_back_when_structure_provider_fails(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            bathymetry_source=FallbackBathymetrySource(
+                primary=StructureBackedSource(
+                    FakeStructureProvider(StructureDataUnavailableError("missing processed structure"))
+                ),
+                fallback=SeededBathymetrySource(signal_store),
+            ),
+            signal_store=signal_store,
+        )
+
+        signals = provider.get_zone_signals(zone, date(2026, 6, 18))
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(signals.structure_distance_nm, 2.6)
+        self.assertEqual(resolved.metadata.bathymetry_source, "mock_fallback")
 
     def test_zone_environmental_input_service_exposes_mock_fallback_sst_metadata(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)

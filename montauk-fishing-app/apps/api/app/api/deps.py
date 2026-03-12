@@ -10,20 +10,24 @@ from app.current_provider import ProcessedCurrentAdapter
 from app.db import get_db_session
 from app.environmental_inputs import (
     ChlorophyllBackedSource,
+    FallbackBathymetrySource,
     FallbackChlorophyllSource,
     FallbackCurrentSource,
     FallbackTemperatureSource,
     MockZoneEnvironmentalSignalStore,
     CurrentBackedSource,
+    SeededBathymetrySource,
     SeededCurrentSource,
     SeededChlorophyllSource,
     SeededTemperatureSource,
+    StructureBackedSource,
     SstBackedTemperatureSource,
     ZoneEnvironmentalInputService,
 )
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.services.zones import ZonesService
 from app.sst_provider import ProcessedCoastwatchSstAdapter
+from app.structure_provider import ProcessedStructureAdapter
 
 DbSession = Annotated[Session, Depends(get_db_session)]
 
@@ -52,6 +56,12 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         max_lon=settings.current_bbox_max_lon,
         break_radius_nm=settings.current_break_radius_nm,
     )
+    structure_provider = ProcessedStructureAdapter(
+        min_lat=settings.structure_bbox_min_lat,
+        max_lat=settings.structure_bbox_max_lat,
+        min_lon=settings.structure_bbox_min_lon,
+        max_lon=settings.structure_bbox_max_lon,
+    )
     temperature_source = FallbackTemperatureSource(
         primary=SstBackedTemperatureSource(sst_provider),
         fallback=SeededTemperatureSource(signal_store),
@@ -64,8 +74,13 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         primary=CurrentBackedSource(current_provider),
         fallback=SeededCurrentSource(signal_store),
     )
+    bathymetry_source = FallbackBathymetrySource(
+        primary=StructureBackedSource(structure_provider),
+        fallback=SeededBathymetrySource(signal_store),
+    )
     return ZoneEnvironmentalInputService(
         temperature_source=temperature_source,
+        bathymetry_source=bathymetry_source,
         chlorophyll_source=chlorophyll_source,
         current_source=current_source,
         signal_store=signal_store,

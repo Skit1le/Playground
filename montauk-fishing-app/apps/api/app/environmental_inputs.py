@@ -7,6 +7,7 @@ from app.chlorophyll_provider import ChlorophyllDataUnavailableError, Chlorophyl
 from app.current_provider import CurrentDataUnavailableError, CurrentProvider
 from app.db_models import ZoneModel
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS
+from app.structure_provider import StructureDataUnavailableError, StructureProvider
 from app.sst_provider import SstDataUnavailableError, SstProvider
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,61 @@ class SeededBathymetrySource:
         return BathymetrySignals(structure_distance_nm=signals.structure_distance_nm)
 
 
+class StructureBackedSource:
+    source_name = "processed"
+
+    def __init__(self, structure_provider: StructureProvider):
+        self.structure_provider = structure_provider
+
+    def get_bathymetry(self, zone: ZoneModel, trip_date: date) -> BathymetrySignals:
+        observation = self.structure_provider.get_zone_structure(
+            zone_id=zone.id,
+            latitude=zone.center_lat,
+            longitude=zone.center_lng,
+            trip_date=trip_date,
+        )
+        return BathymetrySignals(structure_distance_nm=observation.structure_distance_nm)
+
+
+class FallbackBathymetrySource:
+    def __init__(self, primary: BathymetrySource, fallback: BathymetrySource):
+        self.primary = primary
+        self.fallback = fallback
+        self.last_source_name = "mock_fallback"
+
+    def get_bathymetry(self, zone: ZoneModel, trip_date: date) -> BathymetrySignals:
+        try:
+            bathymetry = self.primary.get_bathymetry(zone, trip_date)
+            self.last_source_name = "processed"
+            return bathymetry
+        except StructureDataUnavailableError:
+            logger.warning(
+                "Falling back to mock structure signals for zone '%s' on %s because live structure data was unavailable.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                bathymetry = self.fallback.get_bathymetry(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return bathymetry
+        except Exception:
+            logger.exception(
+                "Unexpected structure provider failure for zone '%s' on %s. Falling back to mock structure signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                bathymetry = self.fallback.get_bathymetry(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
+            return bathymetry
+
+
 class SeededChlorophyllSource:
     source_name = "mock"
 
@@ -357,8 +413,8 @@ class SeededWeatherSource:
 class ZoneEnvironmentalInputService:
     """Composes zone signals from domain-specific data sources.
 
-    Defaults read SST, chlorophyll, and current through provider-backed paths with fallback to
-    the mock signal store, while the remaining signals still come from seeded placeholder
+    Defaults read SST, chlorophyll, current, and structure through provider-backed paths with
+    fallback to the mock signal store, while weather still comes from seeded placeholder
     values. The service can swap in real SST, chlorophyll, current, bathymetry, and weather
     providers one domain at a time without changing route handlers or scoring logic.
     """
@@ -415,7 +471,11 @@ class ZoneEnvironmentalInputService:
                     "last_source_name",
                     getattr(self.current_source, "source_name", "unknown"),
                 ),
-                bathymetry_source=getattr(self.bathymetry_source, "source_name", "unknown"),
+                bathymetry_source=getattr(
+                    self.bathymetry_source,
+                    "last_source_name",
+                    getattr(self.bathymetry_source, "source_name", "unknown"),
+                ),
                 weather_source=getattr(self.weather_source, "source_name", "unknown"),
             ),
         )
