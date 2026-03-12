@@ -8,6 +8,8 @@ from typing import Any, Callable, Protocol
 
 from app.ingested_products import load_processed_product
 
+_MISSING_POINTS: tuple[tuple[float, float, float], ...] = ()
+
 
 @dataclass(frozen=True)
 class WeatherObservation:
@@ -57,7 +59,7 @@ class ProcessedWeatherAdapter:
         self.load_product = load_product
 
     @lru_cache(maxsize=32)
-    def _load_payload(self, target_date: str) -> dict[str, Any]:
+    def _load_points(self, target_date: str) -> tuple[tuple[float, float, float], ...]:
         try:
             payload = self.load_product(
                 "weather",
@@ -67,15 +69,20 @@ class ProcessedWeatherAdapter:
                 self.min_lon,
                 self.max_lon,
             )
-        except FileNotFoundError as exc:
-            raise WeatherDataUnavailableError(f"No processed weather payload found for {target_date}.") from exc
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return _MISSING_POINTS
 
         grid = payload.get("grid")
         if not isinstance(grid, list) or not grid:
-            raise WeatherDataUnavailableError(
-                f"Processed weather payload for {target_date} did not contain a usable grid."
-            )
-        return payload
+            return _MISSING_POINTS
+
+        points: list[tuple[float, float, float]] = []
+        for point in grid:
+            try:
+                points.append((float(point["latitude"]), float(point["longitude"]), float(point["value"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return tuple(points)
 
     @lru_cache(maxsize=256)
     def get_zone_weather(
@@ -85,17 +92,12 @@ class ProcessedWeatherAdapter:
         longitude: float,
         trip_date: date,
     ) -> WeatherObservation:
-        payload = self._load_payload(trip_date.isoformat())
-        grid = payload["grid"]
+        points = self._load_points(trip_date.isoformat())
+        if not points:
+            raise WeatherDataUnavailableError(f"No processed weather payload found for {trip_date.isoformat()}.")
 
         candidates: list[tuple[float, float]] = []
-        for point in grid:
-            try:
-                point_lat = float(point["latitude"])
-                point_lon = float(point["longitude"])
-                point_value = float(point["value"])
-            except (KeyError, TypeError, ValueError):
-                continue
+        for point_lat, point_lon, point_value in points:
             distance_nm = _nautical_miles_between(latitude, longitude, point_lat, point_lon)
             candidates.append((distance_nm, point_value))
 

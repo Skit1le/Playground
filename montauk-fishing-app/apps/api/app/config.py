@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     api_env: str = "development"
     database_url: str = "postgresql://montauk:montauk@localhost:5432/montauk"
     default_zone_limit: int = 10
+    processed_lookup_timeout_seconds: float = Field(default=0.75, alias="PROCESSED_LOOKUP_TIMEOUT_SECONDS")
     sst_bbox_min_lat: float = Field(default=39.8, alias="SST_BBOX_MIN_LAT")
     sst_bbox_max_lat: float = Field(default=41.4, alias="SST_BBOX_MAX_LAT")
     sst_bbox_min_lon: float = Field(default=-72.4, alias="SST_BBOX_MIN_LON")
@@ -35,7 +36,7 @@ class Settings(BaseSettings):
     weather_bbox_min_lon: float = Field(default=-72.4, alias="WEATHER_BBOX_MIN_LON")
     weather_bbox_max_lon: float = Field(default=-69.8, alias="WEATHER_BBOX_MAX_LON")
     allowed_origins_raw: str = Field(
-        default="http://localhost:3000",
+        default="http://localhost:3000,http://127.0.0.1:3000",
         alias="ALLOWED_ORIGINS",
     )
 

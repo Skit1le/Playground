@@ -67,16 +67,21 @@ class ProcessedWeatherAdapterTestCase(unittest.TestCase):
         self.assertEqual(loader.calls, ["2026-06-18"])
 
     def test_get_zone_weather_raises_when_processed_payload_is_missing(self) -> None:
+        loader = FakeProcessedProductLoader(FileNotFoundError("missing"))
         adapter = ProcessedWeatherAdapter(
             min_lat=39.8,
             max_lat=41.4,
             min_lon=-72.4,
             max_lon=-69.8,
-            load_product=FakeProcessedProductLoader(FileNotFoundError("missing")),
+            load_product=loader,
         )
 
         with self.assertRaises(WeatherDataUnavailableError):
             adapter.get_zone_weather("prime-edge", 40.95, -71.88, date(2026, 6, 18))
+        with self.assertRaises(WeatherDataUnavailableError):
+            adapter.get_zone_weather("prime-edge", 40.95, -71.88, date(2026, 6, 18))
+
+        self.assertEqual(loader.calls, ["2026-06-18"])
 
 
 if __name__ == "__main__":

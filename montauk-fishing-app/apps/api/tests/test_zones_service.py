@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from time import sleep
 
 from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllObservation
 from app.current_provider import CurrentDataUnavailableError, CurrentObservation
@@ -156,6 +157,18 @@ class FakeWeatherProvider:
         if isinstance(self.observation, Exception):
             raise self.observation
         return self.observation
+
+
+class SlowSstProvider:
+    def __init__(self, delay_seconds: float):
+        self.delay_seconds = delay_seconds
+
+    def get_zone_sst(self, zone_id: str, latitude: float, longitude: float, trip_date: date) -> SstObservation:
+        sleep(self.delay_seconds)
+        return SstObservation(
+            sea_surface_temp_f=71.2,
+            temp_gradient_f_per_nm=1.9,
+        )
 
 
 def make_species_config() -> SpeciesScoringConfigModel:
@@ -802,6 +815,36 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
 
+        self.assertEqual(resolved.metadata.sst_source, "mock_fallback")
+
+    def test_zone_environmental_input_service_falls_back_when_sst_provider_times_out(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            temperature_source=FallbackTemperatureSource(
+                primary=SstBackedTemperatureSource(SlowSstProvider(delay_seconds=0.05)),
+                fallback=SeededTemperatureSource(signal_store),
+                timeout_seconds=0.01,
+            ),
+            signal_store=signal_store,
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.signals.sea_surface_temp_f, 63.5)
+        self.assertEqual(resolved.signals.temp_gradient_f_per_nm, 0.9)
         self.assertEqual(resolved.metadata.sst_source, "mock_fallback")
 
 

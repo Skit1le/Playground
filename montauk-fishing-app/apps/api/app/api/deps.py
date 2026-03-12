@@ -75,22 +75,27 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
     temperature_source = FallbackTemperatureSource(
         primary=SstBackedTemperatureSource(sst_provider),
         fallback=SeededTemperatureSource(signal_store),
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     chlorophyll_source = FallbackChlorophyllSource(
         primary=ChlorophyllBackedSource(chlorophyll_provider),
         fallback=SeededChlorophyllSource(signal_store),
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     current_source = FallbackCurrentSource(
         primary=CurrentBackedSource(current_provider),
         fallback=SeededCurrentSource(signal_store),
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     bathymetry_source = FallbackBathymetrySource(
         primary=StructureBackedSource(structure_provider),
         fallback=SeededBathymetrySource(signal_store),
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     weather_source = FallbackWeatherSource(
         primary=WeatherBackedSource(weather_provider),
         fallback=SeededWeatherSource(signal_store),
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     return ZoneEnvironmentalInputService(
         temperature_source=temperature_source,

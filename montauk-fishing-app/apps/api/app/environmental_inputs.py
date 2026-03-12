@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import date
 import logging
+from time import perf_counter
 from typing import Protocol
 
 from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllProvider
@@ -12,6 +14,7 @@ from app.sst_provider import SstDataUnavailableError, SstProvider
 from app.weather_provider import WeatherDataUnavailableError, WeatherProvider
 
 logger = logging.getLogger(__name__)
+_PROCESSED_LOOKUP_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="env-signal")
 
 @dataclass(frozen=True)
 class TemperatureSignals:
@@ -124,6 +127,17 @@ class MockZoneEnvironmentalSignalStore:
         return ZoneEnvironmentalSignals(**raw_signals)
 
 
+def _call_with_timeout(callback, timeout_seconds: float):
+    if timeout_seconds <= 0:
+        return callback()
+    future = _PROCESSED_LOOKUP_EXECUTOR.submit(callback)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"Processed lookup exceeded {timeout_seconds:.3f}s.") from exc
+
+
 class SeededTemperatureSource:
     source_name = "mock"
 
@@ -158,15 +172,32 @@ class SstBackedTemperatureSource:
 
 
 class FallbackTemperatureSource:
-    def __init__(self, primary: TemperatureSource, fallback: TemperatureSource):
+    def __init__(self, primary: TemperatureSource, fallback: TemperatureSource, timeout_seconds: float = 0.75):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         try:
-            temperature = self.primary.get_temperature(zone, trip_date)
+            temperature = _call_with_timeout(
+                lambda: self.primary.get_temperature(zone, trip_date),
+                self.timeout_seconds,
+            )
             self.last_source_name = "processed"
+            return temperature
+        except TimeoutError:
+            logger.warning(
+                "Processed SST lookup timed out for zone '%s' on %s. Falling back to mock SST signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                temperature = self.fallback.get_temperature(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
             return temperature
         except SstDataUnavailableError:
             logger.warning(
@@ -224,15 +255,32 @@ class StructureBackedSource:
 
 
 class FallbackBathymetrySource:
-    def __init__(self, primary: BathymetrySource, fallback: BathymetrySource):
+    def __init__(self, primary: BathymetrySource, fallback: BathymetrySource, timeout_seconds: float = 0.75):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
 
     def get_bathymetry(self, zone: ZoneModel, trip_date: date) -> BathymetrySignals:
         try:
-            bathymetry = self.primary.get_bathymetry(zone, trip_date)
+            bathymetry = _call_with_timeout(
+                lambda: self.primary.get_bathymetry(zone, trip_date),
+                self.timeout_seconds,
+            )
             self.last_source_name = "processed"
+            return bathymetry
+        except TimeoutError:
+            logger.warning(
+                "Processed structure lookup timed out for zone '%s' on %s. Falling back to mock structure signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                bathymetry = self.fallback.get_bathymetry(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
             return bathymetry
         except StructureDataUnavailableError:
             logger.warning(
@@ -290,15 +338,32 @@ class ChlorophyllBackedSource:
 
 
 class FallbackChlorophyllSource:
-    def __init__(self, primary: ChlorophyllSource, fallback: ChlorophyllSource):
+    def __init__(self, primary: ChlorophyllSource, fallback: ChlorophyllSource, timeout_seconds: float = 0.75):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
 
     def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
         try:
-            chlorophyll = self.primary.get_chlorophyll(zone, trip_date)
+            chlorophyll = _call_with_timeout(
+                lambda: self.primary.get_chlorophyll(zone, trip_date),
+                self.timeout_seconds,
+            )
             self.last_source_name = "processed"
+            return chlorophyll
+        except TimeoutError:
+            logger.warning(
+                "Processed chlorophyll lookup timed out for zone '%s' on %s. Falling back to mock chlorophyll signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                chlorophyll = self.fallback.get_chlorophyll(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
             return chlorophyll
         except ChlorophyllDataUnavailableError:
             logger.warning(
@@ -362,15 +427,32 @@ class CurrentBackedSource:
 
 
 class FallbackCurrentSource:
-    def __init__(self, primary: CurrentSource, fallback: CurrentSource):
+    def __init__(self, primary: CurrentSource, fallback: CurrentSource, timeout_seconds: float = 0.75):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
 
     def get_current(self, zone: ZoneModel, trip_date: date) -> CurrentSignals:
         try:
-            current = self.primary.get_current(zone, trip_date)
+            current = _call_with_timeout(
+                lambda: self.primary.get_current(zone, trip_date),
+                self.timeout_seconds,
+            )
             self.last_source_name = "processed"
+            return current
+        except TimeoutError:
+            logger.warning(
+                "Processed current lookup timed out for zone '%s' on %s. Falling back to mock current signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                current = self.fallback.get_current(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
             return current
         except CurrentDataUnavailableError:
             logger.warning(
@@ -428,15 +510,32 @@ class WeatherBackedSource:
 
 
 class FallbackWeatherSource:
-    def __init__(self, primary: WeatherSource, fallback: WeatherSource):
+    def __init__(self, primary: WeatherSource, fallback: WeatherSource, timeout_seconds: float = 0.75):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
 
     def get_weather(self, zone: ZoneModel, trip_date: date) -> WeatherSignals:
         try:
-            weather = self.primary.get_weather(zone, trip_date)
+            weather = _call_with_timeout(
+                lambda: self.primary.get_weather(zone, trip_date),
+                self.timeout_seconds,
+            )
             self.last_source_name = "processed"
+            return weather
+        except TimeoutError:
+            logger.warning(
+                "Processed weather lookup timed out for zone '%s' on %s. Falling back to mock weather signals.",
+                zone.id,
+                trip_date.isoformat(),
+            )
+            try:
+                weather = self.fallback.get_weather(zone, trip_date)
+            except Exception:
+                self.last_source_name = "unavailable"
+                raise
+            self.last_source_name = "mock_fallback"
             return weather
         except WeatherDataUnavailableError:
             logger.warning(
@@ -495,11 +594,75 @@ class ZoneEnvironmentalInputService:
         return self.resolve_zone_inputs(zone, trip_date).signals
 
     def resolve_zone_inputs(self, zone: ZoneModel, trip_date: date) -> ResolvedZoneEnvironmentalInputs:
+        started_at = perf_counter()
+        temperature_started = perf_counter()
         temperature = self.temperature_source.get_temperature(zone, trip_date)
+        temperature_elapsed_ms = round((perf_counter() - temperature_started) * 1000, 1)
+
+        bathymetry_started = perf_counter()
         bathymetry = self.bathymetry_source.get_bathymetry(zone, trip_date)
+        bathymetry_elapsed_ms = round((perf_counter() - bathymetry_started) * 1000, 1)
+
+        chlorophyll_started = perf_counter()
         chlorophyll = self.chlorophyll_source.get_chlorophyll(zone, trip_date)
+        chlorophyll_elapsed_ms = round((perf_counter() - chlorophyll_started) * 1000, 1)
+
+        current_started = perf_counter()
         current = self.current_source.get_current(zone, trip_date)
+        current_elapsed_ms = round((perf_counter() - current_started) * 1000, 1)
+
+        weather_started = perf_counter()
         weather = self.weather_source.get_weather(zone, trip_date)
+        weather_elapsed_ms = round((perf_counter() - weather_started) * 1000, 1)
+
+        total_elapsed_ms = round((perf_counter() - started_at) * 1000, 1)
+
+        metadata = ZoneEnvironmentalSourceMetadata(
+            sst_source=getattr(
+                self.temperature_source,
+                "last_source_name",
+                getattr(self.temperature_source, "source_name", "unknown"),
+            ),
+            chlorophyll_source=getattr(
+                self.chlorophyll_source,
+                "last_source_name",
+                getattr(self.chlorophyll_source, "source_name", "unknown"),
+            ),
+            current_source=getattr(
+                self.current_source,
+                "last_source_name",
+                getattr(self.current_source, "source_name", "unknown"),
+            ),
+            bathymetry_source=getattr(
+                self.bathymetry_source,
+                "last_source_name",
+                getattr(self.bathymetry_source, "source_name", "unknown"),
+            ),
+            weather_source=getattr(
+                self.weather_source,
+                "last_source_name",
+                getattr(self.weather_source, "source_name", "unknown"),
+            ),
+        )
+
+        logger.info(
+            "Resolved zone environmental inputs",
+            extra={
+                "zone_id": zone.id,
+                "trip_date": trip_date.isoformat(),
+                "sst_source": metadata.sst_source,
+                "chlorophyll_source": metadata.chlorophyll_source,
+                "current_source": metadata.current_source,
+                "bathymetry_source": metadata.bathymetry_source,
+                "weather_source": metadata.weather_source,
+                "temperature_elapsed_ms": temperature_elapsed_ms,
+                "bathymetry_elapsed_ms": bathymetry_elapsed_ms,
+                "chlorophyll_elapsed_ms": chlorophyll_elapsed_ms,
+                "current_elapsed_ms": current_elapsed_ms,
+                "weather_elapsed_ms": weather_elapsed_ms,
+                "total_elapsed_ms": total_elapsed_ms,
+            },
+        )
 
         return ResolvedZoneEnvironmentalInputs(
             signals=ZoneEnvironmentalSignals(
@@ -511,33 +674,7 @@ class ZoneEnvironmentalInputService:
                 current_break_index=current.current_break_index,
                 weather_risk_index=weather.weather_risk_index,
             ),
-            metadata=ZoneEnvironmentalSourceMetadata(
-                sst_source=getattr(
-                    self.temperature_source,
-                    "last_source_name",
-                    getattr(self.temperature_source, "source_name", "unknown"),
-                ),
-                chlorophyll_source=getattr(
-                    self.chlorophyll_source,
-                    "last_source_name",
-                    getattr(self.chlorophyll_source, "source_name", "unknown"),
-                ),
-                current_source=getattr(
-                    self.current_source,
-                    "last_source_name",
-                    getattr(self.current_source, "source_name", "unknown"),
-                ),
-                bathymetry_source=getattr(
-                    self.bathymetry_source,
-                    "last_source_name",
-                    getattr(self.bathymetry_source, "source_name", "unknown"),
-                ),
-                weather_source=getattr(
-                    self.weather_source,
-                    "last_source_name",
-                    getattr(self.weather_source, "source_name", "unknown"),
-                ),
-            ),
+            metadata=metadata,
         )
 
 

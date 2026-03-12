@@ -1,4 +1,5 @@
 import logging
+from time import perf_counter
 from datetime import date
 
 from app.db_models import SpeciesScoringConfigModel, ZoneModel
@@ -34,16 +35,29 @@ class ZonesService:
         self.environmental_input_provider = environmental_input_provider or ZoneEnvironmentalInputService()
 
     def list_ranked_zones(self, species: str, trip_date: date, limit: int) -> list[RankedZone]:
+        started_at = perf_counter()
         config = self.species_config_repository.get_by_species(species)
         if config is None:
             raise SpeciesConfigNotFoundError(f"No scoring configuration found for species '{species}'.")
 
+        zones = self.zone_repository.list_for_species(species)
         ranked_zones = [
             self._score_zone(zone=zone, config=config, species=species, trip_date=trip_date)
-            for zone in self.zone_repository.list_for_species(species)
+            for zone in zones
         ]
         ranked_zones.sort(key=lambda zone: zone.score, reverse=True)
-        return ranked_zones[:limit]
+        limited_ranked_zones = ranked_zones[:limit]
+        logger.info(
+            "Completed zones ranking request",
+            extra={
+                "trip_date": trip_date.isoformat(),
+                "species": species,
+                "zone_count": len(zones),
+                "returned_zone_count": len(limited_ranked_zones),
+                "elapsed_ms": round((perf_counter() - started_at) * 1000, 1),
+            },
+        )
+        return limited_ranked_zones
 
     def rank_zones(self, species: str, trip_date: date, limit: int) -> list[RankedZone]:
         return self.list_ranked_zones(species=species, trip_date=trip_date, limit=limit)

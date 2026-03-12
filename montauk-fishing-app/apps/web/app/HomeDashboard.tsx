@@ -48,6 +48,8 @@ type HealthResponse = {
 
 const DEFAULT_ISO_DATE = "2026-03-11";
 const DEFAULT_SPECIES = "bluefin";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
 
 const zonePositions: Record<string, { top: string; left: string }> = {
   "hudson-edge-east": { top: "30%", left: "56%" },
@@ -92,12 +94,41 @@ function parseDisplayDate(displayDate: string): Date | null {
   return parsedDate;
 }
 
-async function fetchApi<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-  const response = await fetch(`${baseUrl}${path}`, {
-    cache: "no-store",
-    signal,
-  });
+function getApiUnavailableMessage(path: string): string {
+  return `API unavailable at ${API_BASE_URL} while requesting ${path}.`;
+}
+
+async function fetchApi<T>(
+  path: string,
+  options?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  },
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  options?.signal?.addEventListener("abort", onAbort);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      if (options?.signal?.aborted) {
+        throw error;
+      }
+      throw new Error(`${getApiUnavailableMessage(path)} Request timed out after ${timeoutMs} ms.`);
+    }
+    throw new Error(`${getApiUnavailableMessage(path)} Check that the backend is running.`);
+  } finally {
+    window.clearTimeout(timeoutId);
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
 
   if (!response.ok) {
     throw new Error(`API request failed (${response.status}) for ${path}`);
@@ -147,6 +178,12 @@ export default function HomeDashboard() {
         }
         const message = error instanceof Error ? error.message : "Failed to load supporting dashboard data.";
         setSupportingError(message);
+        setHealth({
+          status: "unavailable",
+          app: "API unavailable",
+          environment: "local dev",
+          database: "unknown",
+        });
       });
 
     return () => {
@@ -159,7 +196,10 @@ export default function HomeDashboard() {
     setIsZonesLoading(true);
     setZonesError(null);
 
-    fetchApi<Zone[]>(`/zones?date=${apiDate}&species=${selectedSpecies}`, controller.signal)
+    fetchApi<Zone[]>(`/zones?date=${apiDate}&species=${selectedSpecies}`, {
+      signal: controller.signal,
+      timeoutMs: 5000,
+    })
       .then((zoneResponse) => {
         setZones(zoneResponse);
       })
@@ -167,7 +207,10 @@ export default function HomeDashboard() {
         if (controller.signal.aborted) {
           return;
         }
-        const message = error instanceof Error ? error.message : "Failed to load zone rankings.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Zone rankings unavailable because the API at ${API_BASE_URL} could not be reached.`;
         setZones([]);
         setZonesError(message);
       })
@@ -323,6 +366,9 @@ export default function HomeDashboard() {
           {isZonesLoading && <p className={styles.loadingBanner}>Refreshing zone scores for {selectedSpecies}...</p>}
           {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
           {supportingError && <p className={styles.errorBanner}>{supportingError}</p>}
+          {(zonesError || supportingError) && (
+            <p className={styles.controlHint}>Current API base URL: {API_BASE_URL}</p>
+          )}
         </section>
 
         <section className={styles.panelSection}>
@@ -426,6 +472,7 @@ export default function HomeDashboard() {
               <p className={styles.statusText}>
                 Status: {health?.status ?? "pending"} | Environment: {health?.environment ?? "loading"}
               </p>
+              {!health && <p className={styles.statusText}>API base URL: {API_BASE_URL}</p>}
             </article>
             <article className={styles.statusCard}>
               <h3 className={styles.statusTitle}>Database</h3>

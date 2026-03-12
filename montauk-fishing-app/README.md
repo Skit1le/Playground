@@ -83,6 +83,8 @@ montauk-fishing-app/
    npm run dev:web
    ```
 
+For local development, prefer `http://127.0.0.1:8000` for the API base URL. The frontend now defaults to that address and shows a clear unavailable message if the API cannot be reached.
+
 ## Environment Variables
 
 ### Root `.env`
@@ -138,6 +140,8 @@ Current data now follows the same adapter path: the backend will read processed 
 Structure/bathymetry now follows the same adapter path: the backend will read processed structure files when available, use the nearest usable grid point for `structure_distance_nm`, cache repeated lookups, and fall back to the mock structure catalog if processed data is unavailable or invalid.
 
 Weather now follows the same adapter path: the backend will read processed weather files when available, use the nearest usable grid point for `weather_risk_index`, cache repeated lookups, and fall back to the mock weather catalog if processed data is unavailable or invalid.
+
+For reliable local development, processed-data adapters now cache both successful lookups and missing/invalid date payloads so a missing processed file only fails once per date instead of once per zone. Each processed lookup also has a small timeout guard before the service falls back to mock values, which keeps `/zones` from hanging behind a slow provider during local runs.
 
 For provider provenance, the backend tracks source labels such as `processed`, `mock_fallback`, and `unavailable` internally. The chlorophyll adapter currently assumes processed files live under `data/processed/coastwatch/chlorophyll/<date>/...json` and expose a top-level `grid` array of `{ latitude, longitude, value }` points where `value` is already chlorophyll concentration in `mg/m3`. The current adapter makes the same file-layout assumption under `data/processed/coastwatch/current/<date>/...json`, with `value` interpreted as current speed in knots. The structure adapter makes the same file-layout assumption under `data/processed/coastwatch/structure/<date>/...json`, with each positive-value grid point treated as usable structure/edge presence and `structure_distance_nm` derived as the nearest distance from the zone center to any such point. The weather adapter makes the same file-layout assumption under `data/processed/coastwatch/weather/<date>/...json`, with `value` interpreted as a normalized weather risk score in the `[0, 1]` range.
 
