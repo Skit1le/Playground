@@ -85,6 +85,9 @@ def get_live_sst_provider() -> LiveCoastwatchSstAdapter:
         dataset_id=settings.live_sst_dataset_id,
         base_url=settings.live_sst_base_url,
         variable_name=settings.live_sst_variable_name,
+        time_suffix=settings.live_sst_time_suffix,
+        extra_selectors=settings.live_sst_extra_selectors,
+        longitude_mode=settings.live_sst_longitude_mode,
         min_lat=settings.sst_bbox_min_lat,
         max_lat=settings.sst_bbox_max_lat,
         min_lon=settings.sst_bbox_min_lon,
@@ -92,6 +95,9 @@ def get_live_sst_provider() -> LiveCoastwatchSstAdapter:
         gradient_radius_nm=settings.sst_gradient_radius_nm,
         timeout_seconds=settings.live_sst_timeout_seconds,
     )
+
+
+LiveSstProviderDep = Annotated[LiveCoastwatchSstAdapter, Depends(get_live_sst_provider)]
 
 
 @lru_cache
@@ -127,6 +133,9 @@ def get_sst_provider() -> FallbackSstProvider:
                 "live_sst_dataset_id": settings.live_sst_dataset_id,
                 "live_sst_base_url": settings.live_sst_base_url,
                 "live_sst_variable_name": settings.live_sst_variable_name,
+                "live_sst_time_suffix": settings.live_sst_time_suffix,
+                "live_sst_extra_selectors": settings.live_sst_extra_selectors,
+                "live_sst_longitude_mode": settings.live_sst_longitude_mode,
             },
         )
         return processed_fallback
@@ -137,6 +146,9 @@ def get_sst_provider() -> FallbackSstProvider:
             "live_sst_dataset_id": settings.live_sst_dataset_id,
             "live_sst_base_url": settings.live_sst_base_url,
             "live_sst_variable_name": settings.live_sst_variable_name,
+            "live_sst_time_suffix": settings.live_sst_time_suffix,
+            "live_sst_extra_selectors": settings.live_sst_extra_selectors,
+            "live_sst_longitude_mode": settings.live_sst_longitude_mode,
         },
     )
     return FallbackSstProvider(

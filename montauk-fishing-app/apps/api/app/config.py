@@ -31,6 +31,9 @@ class Settings(BaseSettings):
         default="sea_surface_temperature",
         alias="LIVE_SST_VARIABLE_NAME",
     )
+    live_sst_time_suffix: str = Field(default="T12:00:00Z", alias="LIVE_SST_TIME_SUFFIX")
+    live_sst_extra_selectors: str = Field(default="", alias="LIVE_SST_EXTRA_SELECTORS")
+    live_sst_longitude_mode: str = Field(default="signed", alias="LIVE_SST_LONGITUDE_MODE")
     sst_bbox_min_lat: float = Field(default=39.8, alias="SST_BBOX_MIN_LAT")
     sst_bbox_max_lat: float = Field(default=41.4, alias="SST_BBOX_MAX_LAT")
     sst_bbox_min_lon: float = Field(default=-72.4, alias="SST_BBOX_MIN_LON")

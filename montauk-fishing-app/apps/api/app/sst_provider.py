@@ -124,6 +124,18 @@ def _normalize_bbox(
     )
 
 
+def _normalize_longitude_for_query(longitude: float, mode: str) -> float:
+    if mode == "0_360" and longitude < 0:
+        return round(longitude + 360, 4)
+    return round(longitude, 4)
+
+
+def _normalize_longitude_for_output(longitude: float, mode: str) -> float:
+    if mode == "0_360" and longitude > 180:
+        return round(longitude - 360, 4)
+    return round(longitude, 4)
+
+
 def _build_observation_from_points(
     *,
     zone_id: str,
@@ -182,6 +194,9 @@ class UpstreamCoastwatchSstAdapter:
         max_lon: float,
         gradient_radius_nm: float = 18.0,
         variable_name: str = "sea_surface_temperature",
+        time_suffix: str = "T12:00:00Z",
+        extra_selectors: str = "",
+        longitude_mode: str = "signed",
         value_column_candidates: tuple[str, ...] = (
             "sea_surface_temperature",
             "sst",
@@ -199,6 +214,9 @@ class UpstreamCoastwatchSstAdapter:
         self.max_lon = max_lon
         self.gradient_radius_nm = gradient_radius_nm
         self.variable_name = variable_name
+        self.time_suffix = time_suffix
+        self.extra_selectors = extra_selectors
+        self.longitude_mode = longitude_mode
         self.value_column_candidates = value_column_candidates
         self.timeout_seconds = timeout_seconds
         self.open_url = open_url
@@ -208,13 +226,15 @@ class UpstreamCoastwatchSstAdapter:
         self.last_failure_reason = ""
         self.last_exception_class = ""
         self.last_exception_message = ""
+        self.last_status_code: int | None = None
 
     def _request_params(self, target_date: str, bbox: BBox) -> dict[str, Any]:
         min_lat, max_lat, min_lon, max_lon = bbox
         query = (
-            f"{self.variable_name}[({target_date}T00:00:00Z)]"
+            f"{self.variable_name}[({target_date}{self.time_suffix})]"
+            f"{self.extra_selectors}"
             f"[({max_lat}):1:({min_lat})]"
-            f"[({min_lon}):1:({max_lon})]"
+            f"[({_normalize_longitude_for_query(min_lon, self.longitude_mode)}):1:({_normalize_longitude_for_query(max_lon, self.longitude_mode)})]"
         )
         return {
             "dataset_id": self.dataset_id,
@@ -222,6 +242,9 @@ class UpstreamCoastwatchSstAdapter:
             "target_date": target_date,
             "bbox": [min_lon, min_lat, max_lon, max_lat],
             "query": query,
+            "time_suffix": self.time_suffix,
+            "extra_selectors": self.extra_selectors,
+            "longitude_mode": self.longitude_mode,
         }
 
     def _default_bbox(self) -> BBox:
@@ -301,6 +324,7 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "invalid_url"
             self.last_exception_class = "ValueError"
             self.last_exception_message = "Malformed upstream SST URL"
+            self.last_status_code = None
             return {
                 "ok": False,
                 "source": self.source_name,
@@ -309,7 +333,9 @@ class UpstreamCoastwatchSstAdapter:
                 "params": request_params,
                 "exception_class": self.last_exception_class,
                 "exception_message": self.last_exception_message,
+                "status_code": self.last_status_code,
                 "dataset_id": self.dataset_id,
+                "timeout_seconds": self.timeout_seconds,
             }
 
         points = self._load_points(target_date, bbox)
@@ -321,8 +347,10 @@ class UpstreamCoastwatchSstAdapter:
             "params": request_params,
             "exception_class": self.last_exception_class or None,
             "exception_message": self.last_exception_message or None,
+            "status_code": self.last_status_code,
             "dataset_id": self.dataset_id,
             "point_count": len(points),
+            "timeout_seconds": self.timeout_seconds,
         }
 
     @lru_cache(maxsize=32)
@@ -331,6 +359,7 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "missing_dataset_id"
             self.last_exception_class = ""
             self.last_exception_message = ""
+            self.last_status_code = None
             return _MISSING_POINTS
 
         url = self._build_csv_url(target_date, bbox)
@@ -340,10 +369,13 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "invalid_url"
             self.last_exception_class = "ValueError"
             self.last_exception_message = "Malformed upstream SST URL"
+            self.last_status_code = None
             logger.warning(
                 "Live SST request URL is invalid",
                 extra={
                     "dataset_id": self.dataset_id,
+                    "variable_name": self.variable_name,
+                    "timeout_seconds": self.timeout_seconds,
                     "request_url": url,
                     "request_params": request_params,
                     "base_url": self.base_url,
@@ -354,16 +386,19 @@ class UpstreamCoastwatchSstAdapter:
             with self.open_url(url, timeout=self.timeout_seconds) as response:
                 raw_text = response.read().decode("utf-8")
         except TimeoutError:
-            self.last_failure_reason = "upstream_timeout"
+            self.last_failure_reason = "timeout"
             self.last_exception_class = "TimeoutError"
             self.last_exception_message = "The upstream SST request timed out."
+            self.last_status_code = None
             logger.warning(
                 "Live SST fetch timed out",
                 extra={
                     "dataset_id": self.dataset_id,
+                    "variable_name": self.variable_name,
                     "trip_date": target_date,
                     "bbox": request_params["bbox"],
                     "base_url": self.base_url,
+                    "timeout_seconds": self.timeout_seconds,
                     "request_url": url,
                     "request_params": request_params,
                 },
@@ -373,14 +408,17 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = f"upstream_http_{exc.code}"
             self.last_exception_class = type(exc).__name__
             self.last_exception_message = str(exc)
+            self.last_status_code = exc.code
             logger.warning(
                 "Live SST fetch returned HTTP error",
                 extra={
                     "dataset_id": self.dataset_id,
+                    "variable_name": self.variable_name,
                     "trip_date": target_date,
                     "bbox": request_params["bbox"],
                     "base_url": self.base_url,
                     "status_code": exc.code,
+                    "timeout_seconds": self.timeout_seconds,
                     "request_url": url,
                     "request_params": request_params,
                     "exception_class": type(exc).__name__,
@@ -392,13 +430,16 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = self._classify_request_error(exc)
             self.last_exception_class = type(exc).__name__
             self.last_exception_message = str(exc)
+            self.last_status_code = None
             logger.warning(
                 "Live SST fetch failed before parsing",
                 extra={
                     "dataset_id": self.dataset_id,
+                    "variable_name": self.variable_name,
                     "trip_date": target_date,
                     "bbox": request_params["bbox"],
                     "base_url": self.base_url,
+                    "timeout_seconds": self.timeout_seconds,
                     "request_url": url,
                     "request_params": request_params,
                     "exception_class": type(exc).__name__,
@@ -413,12 +454,15 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "bad_response_shape"
             self.last_exception_class = ""
             self.last_exception_message = ""
+            self.last_status_code = None
             logger.warning(
                 "Live SST response had no CSV headers",
                 extra={
                     "dataset_id": self.dataset_id,
+                    "variable_name": self.variable_name,
                     "trip_date": target_date,
                     "bbox": request_params["bbox"],
+                    "timeout_seconds": self.timeout_seconds,
                     "request_url": url,
                     "request_params": request_params,
                 },
@@ -437,7 +481,7 @@ class UpstreamCoastwatchSstAdapter:
                 points.append(
                     SstPoint(
                         latitude=point_lat,
-                        longitude=point_lon,
+                        longitude=_normalize_longitude_for_output(point_lon, self.longitude_mode),
                         sea_surface_temp_f=_coastwatch_sst_to_fahrenheit(float(value_text)),
                     )
                 )
@@ -447,6 +491,7 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "variable_not_found"
             self.last_exception_class = ""
             self.last_exception_message = ""
+            self.last_status_code = None
             logger.warning(
                 "Live SST response did not contain the configured value column",
                 extra={
@@ -464,6 +509,7 @@ class UpstreamCoastwatchSstAdapter:
             self.last_failure_reason = "bad_response_shape"
             self.last_exception_class = ""
             self.last_exception_message = ""
+            self.last_status_code = None
             logger.warning(
                 "Live SST response was parsed but yielded no valid points",
                 extra={
@@ -479,6 +525,7 @@ class UpstreamCoastwatchSstAdapter:
         self.last_failure_reason = ""
         self.last_exception_class = ""
         self.last_exception_message = ""
+        self.last_status_code = None
         return tuple(points)
 
     def get_sst_points(

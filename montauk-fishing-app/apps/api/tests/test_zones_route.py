@@ -73,7 +73,19 @@ class ZonesRouteTestCase(unittest.TestCase):
 
         response = list_zones(
             zones_service=fake_service,
-            date_value=date(2026, 6, 18),
+            date_value="2026-06-18",
+            species="bluefin",
+        )
+
+        self.assertEqual(len(response), 1)
+        self.assertEqual(fake_service.calls, [("bluefin", date(2026, 6, 18), 10)])
+
+    def test_list_zones_accepts_mm_dd_yyyy_dates(self) -> None:
+        fake_service = FakeZonesService(response=[make_ranked_zone()])
+
+        response = list_zones(
+            zones_service=fake_service,
+            date_value="06-18-2026",
             species="bluefin",
         )
 
@@ -88,7 +100,7 @@ class ZonesRouteTestCase(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             list_zones(
                 zones_service=fake_service,
-                date_value=date(2026, 6, 18),
+                date_value="06/18/2026",
                 species="bluefin",
             )
 

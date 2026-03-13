@@ -200,6 +200,13 @@ To enable live SST fetching, configure the backend with:
 - optional `LIVE_SST_VARIABLE_NAME`
 
 The default live base URL is `https://coastwatch.pfeg.noaa.gov/erddap/griddap`. A common example dataset ID is `noaacwBLENDEDsstDaily`, but confirm the exact dataset you want before enabling live mode.
+For CoastWatch OISST-style datasets such as `ncdcOisst21NrtAgg`, the backend also supports:
+
+- `LIVE_SST_TIME_SUFFIX=T12:00:00Z`
+- `LIVE_SST_EXTRA_SELECTORS=[(0.0)]`
+- `LIVE_SST_LONGITUDE_MODE=0_360`
+
+That covers daily grids whose SST variable is addressed as `sst[(dateT12:00:00Z)][(0.0)][(lat)][(lon)]` and whose longitudes are stored in `0..360`.
 
 Repeated SST requests for the same `date+bbox` stay in memory for the lifetime of the API process, so local development refreshes do not re-fetch the upstream ERDDAP dataset unnecessarily. If the live fetch fails, the backend immediately falls back to the processed local SST cache, and if that is unavailable too it falls back to the seeded mock SST catalog.
 
