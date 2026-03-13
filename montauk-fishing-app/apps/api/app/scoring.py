@@ -1,5 +1,6 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from datetime import date
+from math import sqrt
 
 from app.db_models import SpeciesScoringConfigModel
 from app.environmental_inputs import ZoneEnvironmentalSignals
@@ -91,6 +92,15 @@ def _score_chlorophyll_break_proximity(
     return _clamp(1 - ((distance_nm - calibration.full_score_distance_nm) / taper_span))
 
 
+def _score_edge_alignment(
+    temp_break_proximity: float,
+    chlorophyll_break_proximity: float,
+) -> float:
+    if temp_break_proximity <= 0 or chlorophyll_break_proximity <= 0:
+        return 0.0
+    return _clamp(sqrt(temp_break_proximity * chlorophyll_break_proximity))
+
+
 def _score_current(speed_kts: float, break_index: float, lower: float, upper: float) -> float:
     speed_score = _score_range(speed_kts, lower, upper, tolerance=1.2)
     return _clamp((speed_score * 0.7) + (break_index * 0.3))
@@ -136,6 +146,7 @@ class ZoneScoringEngine:
             signals.nearest_strong_chl_break_distance_nm,
             chlorophyll_break_calibration,
         )
+        edge_alignment = _score_edge_alignment(temp_break_proximity, chlorophyll_break_proximity)
         current_suitability = _score_current(
             signals.current_speed_kts,
             signals.current_break_index,
@@ -148,6 +159,7 @@ class ZoneScoringEngine:
             temp_suitability=round(temp_suitability * 100, 1),
             temp_gradient=round(temp_gradient * 100, 1),
             temp_break_proximity=round(temp_break_proximity * 100, 1),
+            edge_alignment=round(edge_alignment * 100, 1),
             structure_proximity=round(structure_proximity * 100, 1),
             chlorophyll_suitability=round(chlorophyll_suitability * 100, 1),
             chlorophyll_break_proximity=round(chlorophyll_break_proximity * 100, 1),
@@ -158,6 +170,7 @@ class ZoneScoringEngine:
             temp_suitability=round(temp_suitability * weights.temp_suitability * 100, 1),
             temp_gradient=round(temp_gradient * weights.temp_gradient * 100, 1),
             temp_break_proximity=round(temp_break_proximity * weights.temp_break_proximity * 100, 1),
+            edge_alignment=round(edge_alignment * weights.edge_alignment * 100, 1),
             structure_proximity=round(structure_proximity * weights.structure_proximity * 100, 1),
             chlorophyll_suitability=round(chlorophyll_suitability * weights.chlorophyll_suitability * 100, 1),
             chlorophyll_break_proximity=round(
@@ -172,6 +185,7 @@ class ZoneScoringEngine:
             temp_suitability * weights.temp_suitability
             + temp_gradient * weights.temp_gradient
             + temp_break_proximity * weights.temp_break_proximity
+            + edge_alignment * weights.edge_alignment
             + structure_proximity * weights.structure_proximity
             + chlorophyll_suitability * weights.chlorophyll_suitability
             + chlorophyll_break_proximity * weights.chlorophyll_break_proximity
@@ -267,6 +281,16 @@ def build_chlorophyll_break_config(species: str) -> ChlorophyllBreakConfig:
     )
 
 
+def _edge_alignment_weight_for_species(species: str) -> float:
+    if species == "bluefin":
+        return 0.03
+    if species == "yellowfin":
+        return 0.05
+    if species == "mahi":
+        return 0.03
+    return 0.03
+
+
 def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedScoreConfig:
     temp_break_calibration = get_temp_break_calibration(config.species)
     chlorophyll_break_calibration = get_chlorophyll_break_calibration(config.species)
@@ -274,6 +298,7 @@ def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedSc
         temp_suitability=config.temp_suitability_weight,
         temp_gradient=config.temp_gradient_weight,
         temp_break_proximity=temp_break_calibration.factor_weight,
+        edge_alignment=_edge_alignment_weight_for_species(config.species),
         structure_proximity=config.structure_proximity_weight,
         chlorophyll_suitability=config.chlorophyll_suitability_weight,
         chlorophyll_break_proximity=chlorophyll_break_calibration.factor_weight,
@@ -282,11 +307,12 @@ def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedSc
     )
     total_weight = sum(raw_weights.model_dump().values())
     if total_weight <= 0:
-        equal_weight = round(1 / 8, 4)
+        equal_weight = round(1 / 9, 4)
         return WeightedScoreConfig(
             temp_suitability=equal_weight,
             temp_gradient=equal_weight,
             temp_break_proximity=equal_weight,
+            edge_alignment=equal_weight,
             structure_proximity=equal_weight,
             chlorophyll_suitability=equal_weight,
             chlorophyll_break_proximity=equal_weight,

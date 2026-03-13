@@ -20,6 +20,7 @@ class ScoreBreakdown(BaseModel):
     temp_suitability: float
     temp_gradient: float
     temp_break_proximity: float = 0.0
+    edge_alignment: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     chlorophyll_break_proximity: float = 0.0
@@ -31,6 +32,7 @@ class WeightedScoreConfig(BaseModel):
     temp_suitability: float
     temp_gradient: float
     temp_break_proximity: float = 0.0
+    edge_alignment: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     chlorophyll_break_proximity: float = 0.0
@@ -56,6 +58,7 @@ class WeightedScoreBreakdown(BaseModel):
     temp_suitability: float
     temp_gradient: float
     temp_break_proximity: float = 0.0
+    edge_alignment: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     chlorophyll_break_proximity: float = 0.0

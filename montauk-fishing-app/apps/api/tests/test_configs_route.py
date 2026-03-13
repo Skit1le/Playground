@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from app.api.routes.configs import list_species_configs
 from app.fallback_repositories import InMemorySpeciesConfigRepository
-from app.schemas import SpeciesConfig, WeightedScoreConfig
+from app.schemas import ChlorophyllBreakConfig, SpeciesConfig, TempBreakConfig, WeightedScoreConfig
 from app.services.species_configs import SpeciesConfigService
 
 
@@ -26,11 +26,26 @@ def make_species_config() -> SpeciesConfig:
         preferred_temp_f=[58.0, 66.0],
         ideal_chlorophyll_mg_m3=[0.22, 0.42],
         ideal_current_kts=[1.1, 2.0],
+        temp_break_config=TempBreakConfig(
+            strong_break_threshold_f_per_nm=0.06,
+            full_score_distance_nm=1.5,
+            zero_score_distance_nm=12.0,
+            factor_weight=0.07,
+        ),
+        chlorophyll_break_config=ChlorophyllBreakConfig(
+            strong_break_threshold_mg_m3_per_nm=0.012,
+            full_score_distance_nm=2.5,
+            zero_score_distance_nm=14.0,
+            factor_weight=0.04,
+        ),
         weights=WeightedScoreConfig(
             temp_suitability=0.24,
             temp_gradient=0.16,
+            temp_break_proximity=0.07,
+            edge_alignment=0.03,
             structure_proximity=0.18,
             chlorophyll_suitability=0.11,
+            chlorophyll_break_proximity=0.04,
             current_suitability=0.13,
             weather_fishability=0.18,
         ),

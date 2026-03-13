@@ -93,6 +93,40 @@ class ScoringTestCase(unittest.TestCase):
             bluefin_result.breakdown.chlorophyll_break_proximity,
         )
 
+    def test_edge_alignment_rewards_overlap_more_than_single_edge(self) -> None:
+        engine = ZoneScoringEngine()
+        config = make_config("yellowfin")
+        trip_date = date(2026, 6, 18)
+
+        both_edges = engine.score(
+            make_signals(3.0),
+            config,
+            trip_date,
+        )
+        only_temp_edge = engine.score(
+            ZoneEnvironmentalSignals(
+                sea_surface_temp_f=66.0,
+                temp_gradient_f_per_nm=1.8,
+                structure_distance_nm=1.8,
+                chlorophyll_mg_m3=0.28,
+                current_speed_kts=1.5,
+                current_break_index=0.82,
+                weather_risk_index=0.18,
+                nearest_strong_break_distance_nm=3.0,
+                nearest_strong_chl_break_distance_nm=30.0,
+            ),
+            config,
+            trip_date,
+        )
+        far_from_both = engine.score(
+            make_signals(30.0),
+            config,
+            trip_date,
+        )
+
+        self.assertGreater(both_edges.breakdown.edge_alignment, only_temp_edge.breakdown.edge_alignment)
+        self.assertEqual(far_from_both.breakdown.edge_alignment, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
