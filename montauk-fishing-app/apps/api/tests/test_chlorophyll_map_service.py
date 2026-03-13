@@ -11,6 +11,7 @@ class FakeChlorophyllProvider:
         self.last_source_name = "live"
         self.last_dataset_id = "chlorophyll-test"
         self.last_cache_key = "2026-06-18|-72.4,39.8,-69.8,41.4"
+        self.last_failure_reason = ""
         self.calls: list[tuple[date, float | None, float | None, float | None, float | None]] = []
 
     def get_chlorophyll_points(
@@ -46,6 +47,8 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.metadata.source, "live")
+        self.assertEqual(response.metadata.source_status, "live")
+        self.assertFalse(response.metadata.fallback_used)
         self.assertEqual(response.metadata.dataset_id, "chlorophyll-test")
         self.assertGreater(response.metadata.point_count, 0)
         self.assertGreater(response.metadata.cell_count, 0)
@@ -62,9 +65,33 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.metadata.source, "unavailable")
+        self.assertEqual(response.metadata.source_status, "unavailable")
+        self.assertFalse(response.metadata.live_data_available)
         self.assertEqual(response.metadata.dataset_id, "chlorophyll-test")
         self.assertEqual(response.metadata.point_count, 0)
         self.assertEqual(response.metadata.cell_count, 0)
+
+    def test_get_chlorophyll_break_map_surfaces_fallback_metadata(self) -> None:
+        provider = FakeChlorophyllProvider(
+            (
+                ChlorophyllPoint(latitude=40.9, longitude=-71.9, chlorophyll_mg_m3=0.25),
+                ChlorophyllPoint(latitude=41.0, longitude=-71.8, chlorophyll_mg_m3=0.31),
+            )
+        )
+        provider.last_source_name = "mock_fallback"
+        provider.last_dataset_id = "configured-live-dataset"
+        provider.last_failure_reason = "timeout"
+        service = ChlorophyllBreakMapService(provider, target_cells=36)
+
+        response = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-72.2, 40.7, -71.4, 41.1),
+        )
+
+        self.assertEqual(response.metadata.source_status, "fallback")
+        self.assertTrue(response.metadata.fallback_used)
+        self.assertEqual(response.metadata.failure_reason, "timeout")
+        self.assertGreater(len(response.metadata.warning_messages), 0)
 
     def test_get_chlorophyll_break_map_uses_request_date_and_bbox(self) -> None:
         provider = FakeChlorophyllProvider(
@@ -95,6 +122,31 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         self.assertEqual(second.metadata.bbox, [-72.0, 40.8, -71.6, 41.0])
         self.assertEqual(first.metadata.date.isoformat(), "2026-06-18")
         self.assertEqual(second.metadata.date.isoformat(), "2026-06-19")
+
+    def test_get_chlorophyll_break_map_reduces_target_density_for_large_bbox(self) -> None:
+        provider = FakeChlorophyllProvider(
+            (
+                ChlorophyllPoint(latitude=40.9, longitude=-71.9, chlorophyll_mg_m3=0.25),
+                ChlorophyllPoint(latitude=41.0, longitude=-71.8, chlorophyll_mg_m3=0.31),
+            )
+        )
+        service = ChlorophyllBreakMapService(
+            provider,
+            target_cells=720,
+            reference_bbox=(-72.4, 39.8, -69.8, 41.4),
+            minimum_target_cells=180,
+        )
+
+        default_bbox_response = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-72.4, 39.8, -69.8, 41.4),
+        )
+        wide_bbox_response = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-73.0254, 39.9498, -68.3174, 42.0897),
+        )
+
+        self.assertLess(wide_bbox_response.metadata.cell_count, default_bbox_response.metadata.cell_count)
 
 
 if __name__ == "__main__":

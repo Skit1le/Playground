@@ -239,6 +239,13 @@ def get_sst_map_service() -> SstMapService:
     return SstMapService(
         sst_provider=get_sst_provider(),
         target_cells=settings.sst_map_target_cells,
+        reference_bbox=(
+            settings.sst_bbox_min_lon,
+            settings.sst_bbox_min_lat,
+            settings.sst_bbox_max_lon,
+            settings.sst_bbox_max_lat,
+        ),
+        minimum_target_cells=900,
     )
 
 
@@ -248,6 +255,13 @@ def get_chlorophyll_break_map_service() -> ChlorophyllBreakMapService:
     return ChlorophyllBreakMapService(
         chlorophyll_provider=get_chlorophyll_provider(),
         target_cells=settings.chlorophyll_break_scoring_target_cells,
+        reference_bbox=(
+            settings.chlorophyll_bbox_min_lon,
+            settings.chlorophyll_bbox_min_lat,
+            settings.chlorophyll_bbox_max_lon,
+            settings.chlorophyll_bbox_max_lat,
+        ),
+        minimum_target_cells=180,
     )
 
 

@@ -1,7 +1,20 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import {
+  areBboxesEquivalent,
+  buildApiTimeoutMessage,
+  buildApiUnavailableMessage,
+  buildLayerStatusMessage,
+  clearRequestFailure,
+  formatBboxParam,
+  getRequestFailureState,
+  isApiUnavailableMessage,
+  rememberRequestFailure,
+  normalizeZoneExplanation,
+  type MapBbox,
+} from "./dashboardUtils";
 import styles from "./page.module.css";
 
 const OffshoreMap = dynamic(() => import("./OffshoreMap"), {
@@ -104,12 +117,21 @@ type SstMapResponse = {
     date: string;
     bbox: [number, number, number, number];
     source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
+    source_status?: string;
+    live_data_available?: boolean;
+    fallback_used?: boolean;
+    provider_name?: string | null;
+    dataset_id?: string | null;
+    requested_date?: string | null;
+    resolved_data_timestamp?: string | null;
     units: "fahrenheit";
     point_count: number;
     cell_count: number;
     temp_range_f: [number, number] | null;
     break_intensity_range?: [number, number] | null;
     grid_resolution?: [number, number] | null;
+    failure_reason?: string | null;
+    warning_messages?: string[] | null;
   };
   data: {
     type: "FeatureCollection";
@@ -134,12 +156,21 @@ type ChlorophyllBreakMapResponse = {
     date: string;
     bbox: [number, number, number, number];
     source: string;
+    source_status?: string;
+    live_data_available?: boolean;
+    fallback_used?: boolean;
+    provider_name?: string | null;
+    dataset_id?: string | null;
+    requested_date?: string | null;
+    resolved_data_timestamp?: string | null;
     units: "mg_m3";
     point_count: number;
     cell_count: number;
     chlorophyll_range_mg_m3?: [number, number] | null;
     break_intensity_range_mg_m3_per_nm?: [number, number] | null;
     grid_resolution?: [number, number] | null;
+    failure_reason?: string | null;
+    warning_messages?: string[] | null;
   };
   data: {
     type: "FeatureCollection";
@@ -147,14 +178,14 @@ type ChlorophyllBreakMapResponse = {
   };
 };
 
-type MapBbox = [number, number, number, number];
-
 const DEFAULT_ISO_DATE = "2026-03-11";
 const DEFAULT_SPECIES = "bluefin";
 const DEFAULT_MAP_BBOX: MapBbox = [-72.28, 40.62, -71.02, 41.18];
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
 const ZONES_REQUEST_TIMEOUT_MS = 9000;
+const OVERLAY_REFRESH_DEBOUNCE_MS = 180;
+const RECOVERY_HEALTHCHECK_INTERVAL_MS = 5000;
 const DEFAULT_SPECIES_CONFIGS: SpeciesConfig[] = [
   {
     species: "bluefin",
@@ -214,14 +245,6 @@ function parseDisplayDate(displayDate: string): Date | null {
   return parsedDate;
 }
 
-function getApiUnavailableMessage(path: string): string {
-  return `API unavailable at ${API_BASE_URL} while requesting ${path}.`;
-}
-
-function formatBboxParam(bbox: MapBbox): string {
-  return bbox.map((value) => value.toFixed(4)).join(",");
-}
-
 function buildEmptySstMapResponse(apiDate: string, bbox: MapBbox): SstMapResponse {
   return {
     metadata: {
@@ -260,39 +283,6 @@ function buildEmptyChlorophyllBreakMapResponse(apiDate: string, bbox: MapBbox): 
   };
 }
 
-function formatZoneExplanationLabel(factor: string): string {
-  return factor
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function buildFallbackZoneExplanation(zone: Zone) {
-  const weightedEntries = Object.entries(zone.weighted_score_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
-  const factors = weightedEntries.slice(0, 6).map(([factor, weightedContribution]) => ({
-    factor,
-    label: formatZoneExplanationLabel(factor),
-    raw_value: "Available in zone signals",
-    score: zone.score_breakdown?.[factor] ?? 0,
-    weighted_contribution: weightedContribution,
-    reason: "This factor is contributing meaningfully to the final zone score.",
-  }));
-  const topReasons = factors
-    .filter((factor) => factor.weighted_contribution > 0)
-    .slice(0, 3)
-    .map((factor) => `${factor.label} is adding ${factor.weighted_contribution.toFixed(1)} points to this zone's score.`);
-
-  return {
-    headline: `${zone.name} is ranking well because multiple environmental signals are stacking in its favor.`,
-    summary: `Score ${zone.score.toFixed(1)} with SST ${zone.sea_surface_temp_f.toFixed(1)} F, chlorophyll ${zone.chlorophyll_mg_m3.toFixed(2)} mg/m3, and current ${zone.current_speed_kts.toFixed(1)} kts.`,
-    best_use_case_summary: "Best used as a high-priority scouting zone when multiple environmental signals are lining up.",
-    confidence_score: Math.min(100, Math.round(zone.score * 0.9)),
-    watchouts: ["Live water can shift quickly, so confirm the edge position when you arrive."],
-    top_reasons: topReasons,
-    factors,
-  };
-}
-
 async function fetchApi<T>(
   path: string,
   options?: {
@@ -317,9 +307,9 @@ async function fetchApi<T>(
       if (options?.signal?.aborted) {
         throw error;
       }
-      throw new Error(`${getApiUnavailableMessage(path)} Request timed out after ${timeoutMs} ms.`);
+      throw new Error(buildApiTimeoutMessage(path, timeoutMs, API_BASE_URL));
     }
-    throw new Error(`${getApiUnavailableMessage(path)} Check that the backend is running.`);
+    throw new Error(buildApiUnavailableMessage(path, API_BASE_URL));
   } finally {
     window.clearTimeout(timeoutId);
     options?.signal?.removeEventListener("abort", onAbort);
@@ -356,9 +346,25 @@ export default function HomeDashboard() {
   const [sstMapError, setSstMapError] = useState<string | null>(null);
   const [chlorophyllBreakMapError, setChlorophyllBreakMapError] = useState<string | null>(null);
   const [supportingError, setSupportingError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const apiDate = toApiDate(selectedDate);
-  const bboxParam = formatBboxParam(viewportBbox);
+  const bboxParam = useMemo(() => formatBboxParam(viewportBbox), [viewportBbox]);
+  const requestBbox = useMemo(() => bboxParam.split(",").map((value) => Number(value)) as MapBbox, [bboxParam]);
+  const zonesRequestKey = useMemo(() => `zones:${apiDate}:${selectedSpecies}`, [apiDate, selectedSpecies]);
+  const sstRequestKey = useMemo(() => `sst:${apiDate}:${bboxParam}`, [apiDate, bboxParam]);
+  const chlorophyllRequestKey = useMemo(() => `chlorophyll-breaks:${apiDate}:${bboxParam}`, [apiDate, bboxParam]);
+
+  const handleRetryRequests = useCallback(() => {
+    clearRequestFailure(zonesRequestKey);
+    clearRequestFailure(sstRequestKey);
+    clearRequestFailure(chlorophyllRequestKey);
+    setReloadToken((current) => current + 1);
+  }, [chlorophyllRequestKey, sstRequestKey, zonesRequestKey]);
+
+  const handleViewportBboxChange = useCallback((nextBbox: MapBbox) => {
+    setViewportBbox((currentBbox) => (areBboxesEquivalent(currentBbox, nextBbox) ? currentBbox : nextBbox));
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -422,9 +428,16 @@ export default function HomeDashboard() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [reloadToken]);
 
   useEffect(() => {
+    const priorFailure = getRequestFailureState(zonesRequestKey);
+    if (priorFailure) {
+      setIsZonesLoading(false);
+      setZonesError(priorFailure.message);
+      return;
+    }
+
     const controller = new AbortController();
     setIsZonesLoading(true);
     setZonesError(null);
@@ -434,6 +447,7 @@ export default function HomeDashboard() {
       timeoutMs: ZONES_REQUEST_TIMEOUT_MS,
     })
       .then((zoneResponse) => {
+        clearRequestFailure(zonesRequestKey);
         setZones(zoneResponse);
       })
       .catch((error: unknown) => {
@@ -446,6 +460,7 @@ export default function HomeDashboard() {
             : `Zone rankings unavailable because the API at ${API_BASE_URL} could not be reached.`;
         setZones([]);
         setZonesError(message);
+        rememberRequestFailure(zonesRequestKey, message);
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -456,84 +471,155 @@ export default function HomeDashboard() {
     return () => {
       controller.abort();
     };
-  }, [apiDate, selectedSpecies]);
+  }, [apiDate, selectedSpecies, zonesRequestKey, reloadToken]);
 
   useEffect(() => {
+    const priorFailure = getRequestFailureState(sstRequestKey);
+    if (priorFailure) {
+      setIsSstMapLoading(false);
+      setSstMapError(priorFailure.message);
+      return;
+    }
+
     const controller = new AbortController();
-    setIsSstMapLoading(true);
-    setSstMapError(null);
+    const timeoutId = window.setTimeout(() => {
+      setIsSstMapLoading(true);
+      setSstMapError(null);
 
-    fetchApi<SstMapResponse>(`/map/sst?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`, {
-      signal: controller.signal,
-      timeoutMs: 5000,
-    })
-      .then((response) => {
-        setSstMapData(response);
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        const message =
-          error instanceof Error
-            ? error.message
-            : `SST overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
-        setSstMapData(buildEmptySstMapResponse(apiDate, viewportBbox));
-        setSstMapError(message);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setIsSstMapLoading(false);
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [apiDate, bboxParam, viewportBbox]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsChlBreakMapLoading(true);
-    setChlorophyllBreakMapError(null);
-
-    fetchApi<ChlorophyllBreakMapResponse>(
-      `/map/chlorophyll-breaks?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`,
-      {
+      fetchApi<SstMapResponse>(`/map/sst?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`, {
         signal: controller.signal,
         timeoutMs: 5000,
-      },
-    )
-      .then((response) => {
-        setChlorophyllBreakMapData(response);
       })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        const message =
-          error instanceof Error
-            ? error.message
-            : `Chlorophyll break overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
-        setChlorophyllBreakMapData(buildEmptyChlorophyllBreakMapResponse(apiDate, viewportBbox));
-        setChlorophyllBreakMapError(message);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setIsChlBreakMapLoading(false);
-        }
-      });
+        .then((response) => {
+          clearRequestFailure(sstRequestKey);
+          setSstMapData(response);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          const message =
+            error instanceof Error
+              ? error.message
+              : `SST overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
+          setSstMapData(buildEmptySstMapResponse(apiDate, requestBbox));
+          setSstMapError(message);
+          rememberRequestFailure(sstRequestKey, message);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setIsSstMapLoading(false);
+          }
+        });
+    }, OVERLAY_REFRESH_DEBOUNCE_MS);
 
     return () => {
+      window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [apiDate, bboxParam, viewportBbox]);
+  }, [apiDate, bboxParam, requestBbox, sstRequestKey, reloadToken]);
+
+  useEffect(() => {
+    const priorFailure = getRequestFailureState(chlorophyllRequestKey);
+    if (priorFailure) {
+      setIsChlBreakMapLoading(false);
+      setChlorophyllBreakMapError(priorFailure.message);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      setIsChlBreakMapLoading(true);
+      setChlorophyllBreakMapError(null);
+
+      fetchApi<ChlorophyllBreakMapResponse>(
+        `/map/chlorophyll-breaks?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`,
+        {
+          signal: controller.signal,
+          timeoutMs: 5000,
+        },
+      )
+        .then((response) => {
+          clearRequestFailure(chlorophyllRequestKey);
+          setChlorophyllBreakMapData(response);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          const message =
+            error instanceof Error
+              ? error.message
+              : `Chlorophyll break overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
+          setChlorophyllBreakMapData(buildEmptyChlorophyllBreakMapResponse(apiDate, requestBbox));
+          setChlorophyllBreakMapError(message);
+          rememberRequestFailure(chlorophyllRequestKey, message);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setIsChlBreakMapLoading(false);
+          }
+        });
+    }, OVERLAY_REFRESH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [apiDate, bboxParam, chlorophyllRequestKey, requestBbox, reloadToken]);
 
   const topZone = zones[0] ?? null;
   const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? topZone;
   const selectedZoneExplanation = selectedZone
-    ? selectedZone.score_explanation ?? buildFallbackZoneExplanation(selectedZone)
+    ? normalizeZoneExplanation(selectedZone.score_explanation, selectedZone)
     : null;
+  const sourceWarnings = useMemo(() => {
+    const warnings = [
+      buildLayerStatusMessage("SST", sstMapData?.metadata),
+      buildLayerStatusMessage("chlorophyll", chlorophyllBreakMapData?.metadata),
+    ].filter((warning): warning is string => Boolean(warning));
+    return Array.from(new Set(warnings));
+  }, [chlorophyllBreakMapData, sstMapData]);
+  const hasUnavailableRequestError = useMemo(
+    () =>
+      [zonesError, sstMapError, chlorophyllBreakMapError, supportingError].some((message) =>
+        isApiUnavailableMessage(message),
+      ),
+    [chlorophyllBreakMapError, sstMapError, supportingError, zonesError],
+  );
+
+  useEffect(() => {
+    if (!hasUnavailableRequestError) {
+      return;
+    }
+
+    let isActive = true;
+    const intervalId = window.setInterval(() => {
+      fetchApi<HealthResponse>("/health", { timeoutMs: 2000 })
+        .then((response) => {
+          if (!isActive) {
+            return;
+          }
+          setHealth(response);
+          clearRequestFailure(zonesRequestKey);
+          clearRequestFailure(sstRequestKey);
+          clearRequestFailure(chlorophyllRequestKey);
+          setZonesError(null);
+          setSstMapError(null);
+          setChlorophyllBreakMapError(null);
+          setSupportingError(null);
+          setReloadToken((current) => current + 1);
+        })
+        .catch(() => {
+          // Keep the current passive error state until the API recovers.
+        });
+    }, RECOVERY_HEALTHCHECK_INTERVAL_MS);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [chlorophyllRequestKey, hasUnavailableRequestError, sstRequestKey, zonesRequestKey]);
 
   useEffect(() => {
     if (zones.length === 0) {
@@ -599,7 +685,7 @@ export default function HomeDashboard() {
           isSstMapLoading={isSstMapLoading}
           isZonesLoading={isZonesLoading}
           onZoneSelect={setSelectedZoneId}
-          onViewportBboxChange={setViewportBbox}
+          onViewportBboxChange={handleViewportBboxChange}
           selectedZoneId={selectedZoneId}
           sstMapData={sstMapData}
           sstMapError={sstMapError}
@@ -650,6 +736,16 @@ export default function HomeDashboard() {
           {sstMapError && <p className={styles.errorBanner}>{sstMapError}</p>}
           {chlorophyllBreakMapError && <p className={styles.errorBanner}>{chlorophyllBreakMapError}</p>}
           {supportingError && <p className={styles.errorBanner}>{supportingError}</p>}
+          {sourceWarnings.map((warning) => (
+            <p className={styles.loadingBanner} key={warning}>
+              {warning}
+            </p>
+          ))}
+          {(zonesError || sstMapError || chlorophyllBreakMapError || supportingError) && (
+            <button className={styles.retryButton} onClick={handleRetryRequests} type="button">
+              Retry data requests
+            </button>
+          )}
           {(zonesError || sstMapError || chlorophyllBreakMapError || supportingError) && (
             <p className={styles.controlHint}>Current API base URL: {API_BASE_URL}</p>
           )}
@@ -704,7 +800,7 @@ export default function HomeDashboard() {
               <div className={styles.featuredStats}>
                 <div className={styles.stat}>
                   <p className={styles.statLabel}>Confidence</p>
-                  <p className={styles.statValue}>{selectedZoneExplanation?.confidence_score.toFixed(1)}</p>
+                  <p className={styles.statValue}>{selectedZoneExplanation ? selectedZoneExplanation.confidence_score.toFixed(1) : "--"}</p>
                 </div>
                 <div className={styles.stat}>
                   <p className={styles.statLabel}>Best Use</p>

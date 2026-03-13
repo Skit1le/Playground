@@ -77,6 +77,17 @@ montauk-fishing-app/
    .\scripts\start_api_windows.ps1
    ```
 
+   The Windows launcher now defaults to the reliable foreground workflow and resolves the real Python interpreter before starting uvicorn. Use the same command in a dedicated terminal window during development:
+
+   Useful options:
+
+   ```powershell
+   .\scripts\start_api_windows.ps1 -ForceRestart
+   .\scripts\start_api_windows.ps1 -Background
+   ```
+
+   `-ForceRestart` replaces a stale process already holding port `8000`. `-Background` is available as a best-effort detached launch for environments where child processes are allowed to survive after the parent shell exits.
+
    Direct command if the venv `python.exe` launcher is blocked on Windows:
 
    ```powershell
@@ -101,7 +112,7 @@ For local development, prefer `http://127.0.0.1:8000` for the API base URL. The 
 
 The API now also tolerates a missing local Postgres instance in development: startup falls back to seeded in-memory species and zone data after a short retry window, `/health` still responds, and `/zones` plus `/configs/species` can continue serving local mock-backed results.
 
-On Windows, the recommended API startup path is `.\scripts\start_api_windows.ps1`. It avoids relying on `apps/api/.venv/Scripts/python.exe`, which can fail with `Access is denied` on some machines even when the installed packages are fine.
+On Windows, the recommended API startup path is `.\scripts\start_api_windows.ps1`. It avoids relying on `apps/api/.venv/Scripts/python.exe`, which can fail with `Access is denied` on some machines even when the installed packages are fine, and it resolves the real Python interpreter before running uvicorn.
 
 ## Environment Variables
 

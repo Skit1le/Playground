@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from urllib.error import URLError
 
 from app.chlorophyll_provider import (
     ChlorophyllDataUnavailableError,
@@ -318,6 +319,38 @@ class FallbackChlorophyllProviderTestCase(unittest.TestCase):
 
         self.assertGreaterEqual(len(points), 1)
         self.assertEqual(provider.last_source_name, "mock_fallback")
+
+    def test_get_chlorophyll_points_preserves_primary_failure_reason_when_falling_back(self) -> None:
+        provider = FallbackChlorophyllProvider(
+            primary=FakeChlorophyllProvider(
+                observation=ChlorophyllDataUnavailableError("live missing"),
+                points=ChlorophyllDataUnavailableError("live missing"),
+                source_name="live",
+            ),
+            fallback=MockChlorophyllAdapter(),
+        )
+
+        provider.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(provider.last_source_name, "mock_fallback")
+        self.assertEqual(provider.last_failure_reason, "live missing")
+
+    def test_live_chlorophyll_adapter_classifies_connection_failure(self) -> None:
+        url_open = FakeUrlOpen(URLError("socket blocked"))
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="noaacwCHLdaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+        )
+
+        with self.assertRaises(ChlorophyllDataUnavailableError):
+            adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "connection_error")
 
 
 if __name__ == "__main__":

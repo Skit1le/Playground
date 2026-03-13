@@ -164,13 +164,21 @@ class SstMapMetadata(BaseModel):
     date: DateValue
     bbox: list[float]
     source: str
+    source_status: str = "unavailable"
+    live_data_available: bool = False
+    fallback_used: bool = False
+    provider_name: str | None = None
     dataset_id: str | None = None
+    requested_date: DateValue | None = None
+    resolved_data_timestamp: str | None = None
     units: Literal["fahrenheit"] = "fahrenheit"
     point_count: int
     cell_count: int
     temp_range_f: list[float] | None = None
     break_intensity_range: list[float] | None = None
     grid_resolution: list[int] | None = None
+    failure_reason: str | None = None
+    warning_messages: list[str] = Field(default_factory=list)
 
 
 class SstMapResponse(BaseModel):
@@ -203,13 +211,21 @@ class ChlorophyllBreakMapMetadata(BaseModel):
     date: DateValue
     bbox: list[float]
     source: str
+    source_status: str = "unavailable"
+    live_data_available: bool = False
+    fallback_used: bool = False
+    provider_name: str | None = None
     dataset_id: str | None = None
+    requested_date: DateValue | None = None
+    resolved_data_timestamp: str | None = None
     units: Literal["mg_m3"] = "mg_m3"
     point_count: int
     cell_count: int
     chlorophyll_range_mg_m3: list[float] | None = None
     break_intensity_range_mg_m3_per_nm: list[float] | None = None
     grid_resolution: list[int] | None = None
+    failure_reason: str | None = None
+    warning_messages: list[str] = Field(default_factory=list)
 
 
 class ChlorophyllBreakMapResponse(BaseModel):

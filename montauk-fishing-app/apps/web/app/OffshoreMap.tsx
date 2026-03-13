@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MapBbox } from "./dashboardUtils";
 import styles from "./page.module.css";
 
 type Zone = {
@@ -65,6 +66,7 @@ type SstMapResponse = {
     date: string;
     bbox: [number, number, number, number];
     source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
+    warning_messages?: string[] | null;
     units: "fahrenheit";
     point_count: number;
     cell_count: number;
@@ -84,6 +86,7 @@ type OffshoreMapProps = {
   chlorophyllBreakMapData: {
     metadata: {
       source: string;
+      warning_messages?: string[] | null;
       break_intensity_range_mg_m3_per_nm?: [number, number] | null;
     };
     data: {
@@ -99,7 +102,7 @@ type OffshoreMapProps = {
   chlorophyllBreakMapError: string | null;
   selectedZoneId: string | null;
   onZoneSelect: (zoneId: string) => void;
-  onViewportBboxChange: (bbox: [number, number, number, number]) => void;
+  onViewportBboxChange: (bbox: MapBbox) => void;
 };
 
 type MapLibreRuntime = typeof import("maplibre-gl");
@@ -184,6 +187,22 @@ function getSourceLabel(source: string | null): string {
   return "SST source unknown";
 }
 
+function getChlorophyllSourceLabel(source: string | null): string {
+  if (source === "live") {
+    return "Live chlorophyll";
+  }
+  if (source === "processed") {
+    return "Processed chlorophyll";
+  }
+  if (source === "mock_fallback") {
+    return "Mock chlorophyll fallback";
+  }
+  if (source === "unavailable") {
+    return "Chlorophyll unavailable";
+  }
+  return "Chlorophyll source unknown";
+}
+
 export default function OffshoreMap({
   zones,
   sstMapData,
@@ -202,6 +221,7 @@ export default function OffshoreMap({
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
   const lastViewportBboxRef = useRef<string>("");
+  const onViewportBboxChangeRef = useRef(onViewportBboxChange);
   const [sstOpacity, setSstOpacity] = useState(0.62);
   const [showSstSurface, setShowSstSurface] = useState(true);
   const [showSstGrid, setShowSstGrid] = useState(false);
@@ -229,9 +249,13 @@ export default function OffshoreMap({
     [chlorophyllBreakMapData],
   );
 
+  useEffect(() => {
+    onViewportBboxChangeRef.current = onViewportBboxChange;
+  }, [onViewportBboxChange]);
+
   function emitViewportBbox(map: any) {
     const bounds = map.getBounds();
-    const bbox: [number, number, number, number] = [
+    const bbox: MapBbox = [
       Number(bounds.getWest().toFixed(4)),
       Number(bounds.getSouth().toFixed(4)),
       Number(bounds.getEast().toFixed(4)),
@@ -242,7 +266,7 @@ export default function OffshoreMap({
       return;
     }
     lastViewportBboxRef.current = key;
-    onViewportBboxChange(bbox);
+    onViewportBboxChangeRef.current(bbox);
   }
 
   useEffect(() => {
@@ -652,7 +676,7 @@ export default function OffshoreMap({
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [onViewportBboxChange]);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -827,6 +851,9 @@ export default function OffshoreMap({
             <p className={styles.legendTitle}>SST Overlay</p>
             <span className={styles.sourceBadge}>{getSourceLabel(sstMapData?.metadata.source ?? null)}</span>
           </div>
+          {sstMapData?.metadata.warning_messages?.[0] && (
+            <p className={styles.controlHint}>{sstMapData.metadata.warning_messages[0]}</p>
+          )}
           <div className={styles.temperatureRamp} />
           <div className={styles.temperatureScale}>
             <span>54 F</span>
@@ -916,13 +943,21 @@ export default function OffshoreMap({
             </div>
           </div>
           <div className={styles.legendSection}>
-            <p className={styles.legendTitle}>Chlorophyll Breaks</p>
+            <div className={styles.legendHeader}>
+              <p className={styles.legendTitle}>Chlorophyll Breaks</p>
+              <span className={styles.sourceBadge}>
+                {getChlorophyllSourceLabel(chlorophyllBreakMapData?.metadata.source ?? null)}
+              </span>
+            </div>
             <div className={styles.chlorophyllRamp} />
             <div className={styles.temperatureScale}>
               <span>Weak</span>
               <span>Moderate</span>
               <span>Strong</span>
             </div>
+            {chlorophyllBreakMapData?.metadata.warning_messages?.[0] && (
+              <p className={styles.controlHint}>{chlorophyllBreakMapData.metadata.warning_messages[0]}</p>
+            )}
             <p className={styles.controlHint}>
               Green-yellow cells highlight sharper water-color transitions that can mark bait concentration and cleaner feeding lanes.
             </p>

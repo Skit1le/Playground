@@ -24,6 +24,26 @@ from app.services.chlorophyll_edges import ChlorophyllCellSignal, build_chloroph
 logger = logging.getLogger(__name__)
 
 
+def _resolve_source_status(source: str) -> str:
+    if source == "live":
+        return "live"
+    if source == "unavailable":
+        return "unavailable"
+    return "fallback"
+
+
+def _build_warning_messages(*, source: str, failure_reason: str) -> list[str]:
+    if source == "processed":
+        return ["Live chlorophyll unavailable; using processed chlorophyll data."]
+    if source == "mock_fallback":
+        return ["Live chlorophyll unavailable; using seeded fallback chlorophyll data."]
+    if source == "unavailable":
+        if failure_reason:
+            return [f"Chlorophyll data unavailable for this request ({failure_reason})."]
+        return ["Chlorophyll data unavailable for this request."]
+    return []
+
+
 def _round_coordinate(value: float) -> float:
     return round(value, 5)
 
@@ -108,9 +128,29 @@ def _build_features(
 
 
 class ChlorophyllBreakMapService:
-    def __init__(self, chlorophyll_provider: ChlorophyllProvider, target_cells: int = 720):
+    def __init__(
+        self,
+        chlorophyll_provider: ChlorophyllProvider,
+        target_cells: int = 720,
+        *,
+        reference_bbox: tuple[float, float, float, float] | None = None,
+        minimum_target_cells: int = 180,
+    ):
         self.chlorophyll_provider = chlorophyll_provider
         self.target_cells = target_cells
+        self.reference_bbox = reference_bbox
+        self.minimum_target_cells = minimum_target_cells
+
+    def _resolve_target_cells(self, bbox: tuple[float, float, float, float]) -> int:
+        if not self.reference_bbox:
+            return self.target_cells
+        min_lng, min_lat, max_lng, max_lat = bbox
+        request_area = max((max_lng - min_lng) * (max_lat - min_lat), 0.01)
+        ref_min_lng, ref_min_lat, ref_max_lng, ref_max_lat = self.reference_bbox
+        reference_area = max((ref_max_lng - ref_min_lng) * (ref_max_lat - ref_min_lat), 0.01)
+        area_ratio = max(request_area / reference_area, 1.0)
+        scaled_target_cells = round(self.target_cells / area_ratio)
+        return max(self.minimum_target_cells, min(self.target_cells, scaled_target_cells))
 
     def get_chlorophyll_break_map(
         self,
@@ -119,6 +159,7 @@ class ChlorophyllBreakMapService:
         bbox: tuple[float, float, float, float],
     ) -> ChlorophyllBreakMapResponse:
         min_lng, min_lat, max_lng, max_lat = bbox
+        effective_target_cells = self._resolve_target_cells(bbox)
         try:
             points = self.chlorophyll_provider.get_chlorophyll_points(
                 trip_date,
@@ -132,21 +173,31 @@ class ChlorophyllBreakMapService:
                 "last_source_name",
                 getattr(self.chlorophyll_provider, "source_name", "unknown"),
             )
-            dataset_id = getattr(self.chlorophyll_provider, "last_dataset_id", None)
+            dataset_id = getattr(
+                self.chlorophyll_provider,
+                "last_dataset_id",
+                getattr(self.chlorophyll_provider, "configured_dataset_id", None),
+            )
             cache_key = getattr(self.chlorophyll_provider, "last_cache_key", "")
+            failure_reason = getattr(self.chlorophyll_provider, "last_failure_reason", "")
         except (ChlorophyllDataUnavailableError, Exception):
             points = ()
             source = "unavailable"
-            dataset_id = getattr(self.chlorophyll_provider, "last_dataset_id", None)
+            dataset_id = getattr(
+                self.chlorophyll_provider,
+                "last_dataset_id",
+                getattr(self.chlorophyll_provider, "configured_dataset_id", None),
+            )
             cache_key = ""
+            failure_reason = getattr(self.chlorophyll_provider, "last_failure_reason", "")
 
-        cells = build_chlorophyll_cell_signals(points, bbox, self.target_cells)
-        features = list(_build_features(cells, bbox, self.target_cells))
+        cells = build_chlorophyll_cell_signals(points, bbox, effective_target_cells)
+        features = list(_build_features(cells, bbox, effective_target_cells))
         values = [point.chlorophyll_mg_m3 for point in points]
         chlorophyll_range = [round(min(values), 4), round(max(values), 4)] if values else None
         break_values = [cell.break_intensity_mg_m3_per_nm for cell in cells]
         break_range = [round(min(break_values), 5), round(max(break_values), 5)] if break_values else None
-        columns, rows = _estimate_grid_dimensions(bbox, target_cells=self.target_cells)
+        columns, rows = _estimate_grid_dimensions(bbox, target_cells=effective_target_cells)
 
         logger.info(
             "Resolved /map/chlorophyll-breaks dataset",
@@ -156,8 +207,10 @@ class ChlorophyllBreakMapService:
                 "source": source,
                 "dataset_id": dataset_id,
                 "cache_key": cache_key,
+                "failure_reason": failure_reason,
                 "point_count": len(points),
                 "cell_count": len(features),
+                "target_cells": effective_target_cells,
                 "grid_resolution": [columns, rows],
             },
         )
@@ -167,12 +220,20 @@ class ChlorophyllBreakMapService:
                 date=trip_date,
                 bbox=[min_lng, min_lat, max_lng, max_lat],
                 source=source,
+                source_status=_resolve_source_status(source),
+                live_data_available=source == "live",
+                fallback_used=source in {"processed", "mock_fallback"},
+                provider_name=type(self.chlorophyll_provider).__name__,
                 dataset_id=dataset_id,
+                requested_date=trip_date,
+                resolved_data_timestamp=trip_date.isoformat(),
                 point_count=len(points),
                 cell_count=len(features),
                 chlorophyll_range_mg_m3=chlorophyll_range,
                 break_intensity_range_mg_m3_per_nm=break_range,
                 grid_resolution=[columns, rows] if features else None,
+                failure_reason=failure_reason or None,
+                warning_messages=_build_warning_messages(source=source, failure_reason=failure_reason),
             ),
             data=ChlorophyllBreakMapFeatureCollection(features=features),
         )

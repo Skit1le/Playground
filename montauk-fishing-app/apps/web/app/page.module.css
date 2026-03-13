@@ -259,6 +259,21 @@
   color: #ffd4cd;
 }
 
+.retryButton {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(102, 240, 201, 0.28);
+  background: rgba(102, 240, 201, 0.12);
+  color: #e9fff8;
+  cursor: pointer;
+}
+
+.retryButton:hover,
+.retryButton:focus-visible {
+  background: rgba(102, 240, 201, 0.18);
+  outline: none;
+}
+
 .errorText {
   margin: 8px 0 0;
   color: #ffd4cd;

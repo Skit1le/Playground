@@ -13,3 +13,5 @@ __pycache__
 coverage
 data/raw/
 data/processed/
+apps/api/.logs/
+apps/api/.run/

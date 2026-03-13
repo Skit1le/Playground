@@ -19,6 +19,26 @@ from app.sst_provider import SstDataUnavailableError, SstPoint, SstProvider
 logger = logging.getLogger(__name__)
 
 
+def _resolve_source_status(source: str) -> str:
+    if source == "live":
+        return "live"
+    if source == "unavailable":
+        return "unavailable"
+    return "fallback"
+
+
+def _build_warning_messages(*, layer_name: str, source: str, failure_reason: str) -> list[str]:
+    if source == "processed":
+        return [f"Live {layer_name} unavailable; using processed {layer_name} data."]
+    if source == "mock_fallback":
+        return [f"Live {layer_name} unavailable; using seeded fallback {layer_name} data."]
+    if source == "unavailable":
+        if failure_reason:
+            return [f"{layer_name.upper()} data unavailable for this request ({failure_reason})."]
+        return [f"{layer_name.upper()} data unavailable for this request."]
+    return []
+
+
 @dataclass(frozen=True)
 class SstCellSignal:
     west: float
@@ -215,9 +235,29 @@ def _build_feature_collection(cells: tuple[SstCellSignal, ...]) -> tuple[SstMapF
 
 
 class SstMapService:
-    def __init__(self, sst_provider: SstProvider, target_cells: int = 480):
+    def __init__(
+        self,
+        sst_provider: SstProvider,
+        target_cells: int = 480,
+        *,
+        reference_bbox: tuple[float, float, float, float] | None = None,
+        minimum_target_cells: int = 600,
+    ):
         self.sst_provider = sst_provider
         self.target_cells = target_cells
+        self.reference_bbox = reference_bbox
+        self.minimum_target_cells = minimum_target_cells
+
+    def _resolve_target_cells(self, bbox: tuple[float, float, float, float]) -> int:
+        if not self.reference_bbox:
+            return self.target_cells
+        min_lng, min_lat, max_lng, max_lat = bbox
+        request_area = max((max_lng - min_lng) * (max_lat - min_lat), 0.01)
+        ref_min_lng, ref_min_lat, ref_max_lng, ref_max_lat = self.reference_bbox
+        reference_area = max((ref_max_lng - ref_min_lng) * (ref_max_lat - ref_min_lat), 0.01)
+        area_ratio = max(request_area / reference_area, 1.0)
+        scaled_target_cells = round(self.target_cells / area_ratio)
+        return max(self.minimum_target_cells, min(self.target_cells, scaled_target_cells))
 
     def get_sst_map(
         self,
@@ -226,6 +266,7 @@ class SstMapService:
         bbox: tuple[float, float, float, float],
     ) -> SstMapResponse:
         min_lng, min_lat, max_lng, max_lat = bbox
+        effective_target_cells = self._resolve_target_cells(bbox)
         try:
             points = self.sst_provider.get_sst_points(
                 trip_date,
@@ -256,9 +297,9 @@ class SstMapService:
 
         temps = [point.sea_surface_temp_f for point in points]
         temp_range = [round(min(temps), 1), round(max(temps), 1)] if temps else None
-        cells = build_sst_cell_signals(points, bbox, self.target_cells)
+        cells = build_sst_cell_signals(points, bbox, effective_target_cells)
         features = list(_build_feature_collection(cells))
-        columns, rows = _estimate_grid_dimensions(bbox, target_cells=self.target_cells)
+        columns, rows = _estimate_grid_dimensions(bbox, target_cells=effective_target_cells)
         break_intensities = [cell.break_intensity_f_per_nm for cell in cells]
         break_range = (
             [round(min(break_intensities), 4), round(max(break_intensities), 4)] if break_intensities else None
@@ -274,6 +315,7 @@ class SstMapService:
                 "failure_reason": failure_reason,
                 "point_count": len(points),
                 "cell_count": len(features),
+                "target_cells": effective_target_cells,
                 "break_intensity_range": break_range,
                 "grid_resolution": [columns, rows],
             },
@@ -284,12 +326,24 @@ class SstMapService:
                 date=trip_date,
                 bbox=[min_lng, min_lat, max_lng, max_lat],
                 source=source,
+                source_status=_resolve_source_status(source),
+                live_data_available=source == "live",
+                fallback_used=source in {"processed", "mock_fallback"},
+                provider_name=type(self.sst_provider).__name__,
                 dataset_id=dataset_id,
+                requested_date=trip_date,
+                resolved_data_timestamp=trip_date.isoformat(),
                 point_count=len(points),
                 cell_count=len(features),
                 temp_range_f=temp_range,
                 break_intensity_range=break_range,
                 grid_resolution=[columns, rows] if features else None,
+                failure_reason=failure_reason or None,
+                warning_messages=_build_warning_messages(
+                    layer_name="sst",
+                    source=source,
+                    failure_reason=failure_reason,
+                ),
             ),
             data=SstMapFeatureCollection(features=features),
         )

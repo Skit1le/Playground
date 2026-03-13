@@ -86,6 +86,31 @@ class SstMapServiceTestCase(unittest.TestCase):
         self.assertIsNone(response.metadata.grid_resolution)
         self.assertEqual(response.data.features, [])
 
+    def test_get_sst_map_reduces_target_density_for_large_bbox(self) -> None:
+        service = SstMapService(
+            sst_provider=FakeSstProvider(
+                points=(
+                    SstPoint(latitude=40.95, longitude=-71.88, sea_surface_temp_f=66.2),
+                    SstPoint(latitude=40.98, longitude=-71.81, sea_surface_temp_f=67.1),
+                ),
+                source_name="live",
+            ),
+            target_cells=7584,
+            reference_bbox=(-72.4, 39.8, -69.8, 41.4),
+            minimum_target_cells=900,
+        )
+
+        default_bbox_response = service.get_sst_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-72.4, 39.8, -69.8, 41.4),
+        )
+        wide_bbox_response = service.get_sst_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-73.0254, 39.9498, -68.3174, 42.0897),
+        )
+
+        self.assertLess(wide_bbox_response.metadata.cell_count, default_bbox_response.metadata.cell_count)
+
 
 if __name__ == "__main__":
     unittest.main()
