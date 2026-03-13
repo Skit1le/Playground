@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -89,3 +90,37 @@ class TripLog(BaseModel):
 class ZoneQuery(BaseModel):
     date: date
     species: str = Field(pattern="^(bluefin|yellowfin|mahi)$")
+
+
+class SstMapPointGeometry(BaseModel):
+    type: Literal["Point"] = "Point"
+    coordinates: list[float]
+
+
+class SstMapFeatureProperties(BaseModel):
+    sea_surface_temp_f: float
+
+
+class SstMapFeature(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: SstMapPointGeometry
+    properties: SstMapFeatureProperties
+
+
+class SstMapFeatureCollection(BaseModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[SstMapFeature]
+
+
+class SstMapMetadata(BaseModel):
+    date: date
+    bbox: list[float]
+    source: str
+    units: Literal["fahrenheit"] = "fahrenheit"
+    point_count: int
+    temp_range_f: list[float] | None = None
+
+
+class SstMapResponse(BaseModel):
+    metadata: SstMapMetadata
+    data: SstMapFeatureCollection

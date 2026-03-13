@@ -2,7 +2,7 @@
 
 `montauk-fishing-app` is a monorepo scaffold for an offshore fishing intelligence platform focused on Montauk. It includes:
 
-- `apps/web`: Next.js + TypeScript frontend with a full-screen map-style UI and intelligence panel
+- `apps/web`: Next.js + TypeScript frontend with a real MapLibre offshore map and intelligence panel
 - `apps/api`: FastAPI backend with Postgres-backed scoring configs, seeded offshore zones, and ranking endpoints
 - `docker-compose.yml`: local development stack for the frontend, backend, and Postgres
 
@@ -121,6 +121,7 @@ See [`apps/api/.env.example`](/C:/Users/miles/OneDrive/Documents/Playground/mont
 
 - `GET /health`: service status and Postgres connectivity check
 - `GET /zones?date=YYYY-MM-DD&species=bluefin`: ranked offshore zones scored for `bluefin`, `yellowfin`, or `mahi`
+- `GET /map/sst?date=YYYY-MM-DD&bbox=minLng,minLat,maxLng,maxLat`: backend-normalized SST overlay data for the offshore map
 - `GET /trip-logs`: mock trip history entries
 - `GET /configs/species`: species scoring configs, preferred ranges, and normalized weights
 
@@ -153,6 +154,22 @@ Today the environmental input service uses provider-backed SST, chlorophyll, cur
 
 SST is now the first signal with a live-data adapter path: the backend will read processed CoastWatch SST files when available, derive nearest-zone temperature and a simple local gradient, cache repeated lookups, and fall back to the mock SST catalog if processed data is unavailable or invalid.
 
+SST can now also fetch live CoastWatch ERDDAP grid data on the backend before it checks processed files. The live SST resolution order is:
+
+- live CoastWatch ERDDAP grid fetch
+- processed SST file
+- mock SST fallback
+
+The live adapter fetches one SST grid subset per date and bounding box, caches that dataset in memory, and reuses it across all zone lookups for the same request date.
+
+The frontend now also consumes a dedicated backend SST map contract at `GET /map/sst`. That endpoint returns a GeoJSON-style point grid plus metadata:
+
+- `metadata.source`: `live`, `processed`, `mock_fallback`, or `unavailable`
+- `metadata.bbox`, `metadata.point_count`, and `metadata.temp_range_f`
+- `data`: GeoJSON `FeatureCollection` of SST points with `sea_surface_temp_f`
+
+This is intentionally GeoJSON/grid based rather than raster/tile based because it is the simplest maintainable path for local development: the backend can reuse one cached SST dataset per date, the frontend can render it directly in MapLibre, and the `/zones` response contract stays unchanged.
+
 Chlorophyll now follows the same adapter path: the backend will read processed CoastWatch chlorophyll files when available, use the nearest usable grid point for `chlorophyll_mg_m3`, cache repeated lookups, and fall back to the mock chlorophyll catalog if processed data is unavailable or invalid.
 
 Current data now follows the same adapter path: the backend will read processed current files when available, use the nearest usable grid point for `current_speed_kts`, derive a simple local `current_break_index`, cache repeated lookups, and fall back to the mock current catalog if processed data is unavailable or invalid.
@@ -164,6 +181,16 @@ Weather now follows the same adapter path: the backend will read processed weath
 For reliable local development, processed-data adapters now cache both successful lookups and missing/invalid date payloads so a missing processed file only fails once per date instead of once per zone. Each processed lookup also has a small timeout guard before the service falls back to mock values, which keeps `/zones` from hanging behind a slow provider during local runs.
 
 For provider provenance, the backend tracks source labels such as `processed`, `mock_fallback`, and `unavailable` internally. The chlorophyll adapter currently assumes processed files live under `data/processed/coastwatch/chlorophyll/<date>/...json` and expose a top-level `grid` array of `{ latitude, longitude, value }` points where `value` is already chlorophyll concentration in `mg/m3`. The current adapter makes the same file-layout assumption under `data/processed/coastwatch/current/<date>/...json`, with `value` interpreted as current speed in knots. The structure adapter makes the same file-layout assumption under `data/processed/coastwatch/structure/<date>/...json`, with each positive-value grid point treated as usable structure/edge presence and `structure_distance_nm` derived as the nearest distance from the zone center to any such point. The weather adapter makes the same file-layout assumption under `data/processed/coastwatch/weather/<date>/...json`, with `value` interpreted as a normalized weather risk score in the `[0, 1]` range.
+
+To enable live SST fetching, configure the backend with:
+
+- `LIVE_SST_ENABLED=true`
+- `LIVE_SST_DATASET_ID=<NOAA CoastWatch ERDDAP SST dataset id>`
+- optional `LIVE_SST_BASE_URL`
+- optional `LIVE_SST_TIMEOUT_SECONDS`
+- optional `LIVE_SST_VARIABLE_NAME`
+
+The default live base URL is `https://coastwatch.pfeg.noaa.gov/erddap/griddap`. A common example dataset ID is `noaacwBLENDEDsstDaily`, but confirm the exact dataset you want before enabling live mode.
 
 ## Ingestion Scripts
 

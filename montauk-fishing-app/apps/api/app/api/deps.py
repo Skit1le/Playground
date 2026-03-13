@@ -15,14 +15,12 @@ from app.environmental_inputs import (
     FallbackBathymetrySource,
     FallbackChlorophyllSource,
     FallbackCurrentSource,
-    FallbackTemperatureSource,
     FallbackWeatherSource,
     MockZoneEnvironmentalSignalStore,
     CurrentBackedSource,
     SeededBathymetrySource,
     SeededCurrentSource,
     SeededChlorophyllSource,
-    SeededTemperatureSource,
     SeededWeatherSource,
     StructureBackedSource,
     SstBackedTemperatureSource,
@@ -31,8 +29,14 @@ from app.environmental_inputs import (
 )
 from app.fallback_repositories import InMemorySpeciesConfigRepository, InMemoryZoneRepository
 from app.repositories import SpeciesConfigRepository, ZoneRepository
+from app.services.sst_map import SstMapService
 from app.services.zones import ZonesService
-from app.sst_provider import ProcessedCoastwatchSstAdapter
+from app.sst_provider import (
+    FallbackSstProvider,
+    LiveCoastwatchSstAdapter,
+    MockSstAdapter,
+    ProcessedCoastwatchSstAdapter,
+)
 from app.structure_provider import ProcessedStructureAdapter
 from app.weather_provider import ProcessedWeatherAdapter
 
@@ -40,16 +44,62 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 
 
 @lru_cache
-def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
+def get_signal_store() -> MockZoneEnvironmentalSignalStore:
+    return MockZoneEnvironmentalSignalStore()
+
+
+@lru_cache
+def get_processed_sst_provider() -> ProcessedCoastwatchSstAdapter:
     settings = get_settings()
-    signal_store = MockZoneEnvironmentalSignalStore()
-    sst_provider = ProcessedCoastwatchSstAdapter(
+    return ProcessedCoastwatchSstAdapter(
         min_lat=settings.sst_bbox_min_lat,
         max_lat=settings.sst_bbox_max_lat,
         min_lon=settings.sst_bbox_min_lon,
         max_lon=settings.sst_bbox_max_lon,
         gradient_radius_nm=settings.sst_gradient_radius_nm,
     )
+
+
+@lru_cache
+def get_live_sst_provider() -> LiveCoastwatchSstAdapter:
+    settings = get_settings()
+    return LiveCoastwatchSstAdapter(
+        dataset_id=settings.live_sst_dataset_id,
+        base_url=settings.live_sst_base_url,
+        variable_name=settings.live_sst_variable_name,
+        min_lat=settings.sst_bbox_min_lat,
+        max_lat=settings.sst_bbox_max_lat,
+        min_lon=settings.sst_bbox_min_lon,
+        max_lon=settings.sst_bbox_max_lon,
+        gradient_radius_nm=settings.sst_gradient_radius_nm,
+        timeout_seconds=settings.live_sst_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_sst_provider() -> FallbackSstProvider:
+    settings = get_settings()
+    processed_sst_provider = get_processed_sst_provider()
+    mock_sst_provider = MockSstAdapter(records=get_signal_store().records)
+    processed_fallback = FallbackSstProvider(
+        primary=processed_sst_provider,
+        fallback=mock_sst_provider,
+        timeout_seconds=settings.processed_lookup_timeout_seconds,
+    )
+    if not settings.live_sst_enabled:
+        return processed_fallback
+    return FallbackSstProvider(
+        primary=get_live_sst_provider(),
+        fallback=processed_fallback,
+        timeout_seconds=settings.live_sst_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
+    settings = get_settings()
+    signal_store = get_signal_store()
+    temperature_source = SstBackedTemperatureSource(get_sst_provider())
     chlorophyll_provider = ProcessedCoastwatchChlorophyllAdapter(
         min_lat=settings.chlorophyll_bbox_min_lat,
         max_lat=settings.chlorophyll_bbox_max_lat,
@@ -74,11 +124,6 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         max_lat=settings.weather_bbox_max_lat,
         min_lon=settings.weather_bbox_min_lon,
         max_lon=settings.weather_bbox_max_lon,
-    )
-    temperature_source = FallbackTemperatureSource(
-        primary=SstBackedTemperatureSource(sst_provider),
-        fallback=SeededTemperatureSource(signal_store),
-        timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     chlorophyll_source = FallbackChlorophyllSource(
         primary=ChlorophyllBackedSource(chlorophyll_provider),
@@ -110,6 +155,11 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
     )
 
 
+@lru_cache
+def get_sst_map_service() -> SstMapService:
+    return SstMapService(sst_provider=get_sst_provider())
+
+
 def get_zones_service(session: DbSession) -> ZonesService:
     try:
         session.execute(text("SELECT 1"))
@@ -127,3 +177,4 @@ def get_zones_service(session: DbSession) -> ZonesService:
 
 
 ZonesServiceDep = Annotated[ZonesService, Depends(get_zones_service)]
+SstMapServiceDep = Annotated[SstMapService, Depends(get_sst_map_service)]

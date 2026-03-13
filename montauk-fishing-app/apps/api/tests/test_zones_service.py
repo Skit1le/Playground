@@ -76,8 +76,9 @@ class FakeEnvironmentalInputProvider:
 
 
 class FakeSstProvider:
-    def __init__(self, observation: SstObservation | Exception):
+    def __init__(self, observation: SstObservation | Exception, source_name: str = "processed"):
         self.observation = observation
+        self.source_name = source_name
         self.calls: list[tuple[str, date]] = []
 
     def get_zone_sst(self, zone_id: str, latitude: float, longitude: float, trip_date: date) -> SstObservation:
@@ -581,6 +582,37 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(resolved.metadata.chlorophyll_source, "mock")
         self.assertEqual(resolved.metadata.current_source, "mock")
 
+    def test_zone_environmental_input_service_exposes_live_sst_source_metadata(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        provider = ZoneEnvironmentalInputService(
+            temperature_source=SstBackedTemperatureSource(
+                FakeSstProvider(
+                    SstObservation(
+                        sea_surface_temp_f=71.2,
+                        temp_gradient_f_per_nm=1.9,
+                    ),
+                    source_name="live",
+                )
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "prime-edge": {
+                        "sea_surface_temp_f": 61.1,
+                        "temp_gradient_f_per_nm": 0.4,
+                        "structure_distance_nm": 2.6,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.22,
+                    }
+                }
+            ),
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.metadata.sst_source, "live")
+
     def test_zone_environmental_input_service_exposes_processed_chlorophyll_source_metadata(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
         provider = ZoneEnvironmentalInputService(
@@ -843,6 +875,81 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
 
+        self.assertEqual(resolved.metadata.sst_source, "mock_fallback")
+
+    def test_zone_environmental_input_service_falls_back_from_live_sst_to_processed(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            temperature_source=FallbackTemperatureSource(
+                primary=SstBackedTemperatureSource(
+                    FakeSstProvider(SstDataUnavailableError("live SST timeout"), source_name="live")
+                ),
+                fallback=FallbackTemperatureSource(
+                    primary=SstBackedTemperatureSource(
+                        FakeSstProvider(
+                            SstObservation(sea_surface_temp_f=68.8, temp_gradient_f_per_nm=1.6),
+                            source_name="processed",
+                        )
+                    ),
+                    fallback=SeededTemperatureSource(signal_store),
+                ),
+            ),
+            signal_store=signal_store,
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.signals.sea_surface_temp_f, 68.8)
+        self.assertEqual(resolved.signals.temp_gradient_f_per_nm, 1.6)
+        self.assertEqual(resolved.metadata.sst_source, "processed")
+
+    def test_zone_environmental_input_service_falls_back_from_live_to_processed_to_mock(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 63.5,
+                    "temp_gradient_f_per_nm": 0.9,
+                    "structure_distance_nm": 2.6,
+                    "chlorophyll_mg_m3": 0.27,
+                    "current_speed_kts": 1.4,
+                    "current_break_index": 0.73,
+                    "weather_risk_index": 0.22,
+                }
+            }
+        )
+        provider = ZoneEnvironmentalInputService(
+            temperature_source=FallbackTemperatureSource(
+                primary=SstBackedTemperatureSource(
+                    FakeSstProvider(SstDataUnavailableError("live SST timeout"), source_name="live")
+                ),
+                fallback=FallbackTemperatureSource(
+                    primary=SstBackedTemperatureSource(
+                        FakeSstProvider(SstDataUnavailableError("processed SST missing"), source_name="processed")
+                    ),
+                    fallback=SeededTemperatureSource(signal_store),
+                ),
+            ),
+            signal_store=signal_store,
+        )
+
+        resolved = provider.resolve_zone_inputs(zone, date(2026, 6, 18))
+
+        self.assertEqual(resolved.signals.sea_surface_temp_f, 63.5)
+        self.assertEqual(resolved.signals.temp_gradient_f_per_nm, 0.9)
         self.assertEqual(resolved.metadata.sst_source, "mock_fallback")
 
     def test_zone_environmental_input_service_falls_back_when_sst_provider_times_out(self) -> None:

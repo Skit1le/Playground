@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     database_startup_max_attempts: int = Field(default=3, alias="DATABASE_STARTUP_MAX_ATTEMPTS")
     database_startup_delay_seconds: int = Field(default=1, alias="DATABASE_STARTUP_DELAY_SECONDS")
     processed_lookup_timeout_seconds: float = Field(default=0.75, alias="PROCESSED_LOOKUP_TIMEOUT_SECONDS")
+    live_sst_enabled: bool = Field(default=False, alias="LIVE_SST_ENABLED")
+    live_sst_timeout_seconds: float = Field(default=2.0, alias="LIVE_SST_TIMEOUT_SECONDS")
+    live_sst_base_url: str = Field(
+        default="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+        alias="LIVE_SST_BASE_URL",
+    )
+    live_sst_dataset_id: str = Field(
+        default="CONFIGURE_NOAA_COASTWATCH_SST_DATASET_ID",
+        alias="LIVE_SST_DATASET_ID",
+    )
+    live_sst_variable_name: str = Field(
+        default="sea_surface_temperature",
+        alias="LIVE_SST_VARIABLE_NAME",
+    )
     sst_bbox_min_lat: float = Field(default=39.8, alias="SST_BBOX_MIN_LAT")
     sst_bbox_max_lat: float = Field(default=41.4, alias="SST_BBOX_MAX_LAT")
     sst_bbox_min_lon: float = Field(default=-72.4, alias="SST_BBOX_MIN_LON")

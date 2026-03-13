@@ -1,4 +1,4 @@
-﻿.shell {
+.shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
   min-height: 100vh;
@@ -8,46 +8,15 @@
   position: relative;
   overflow: hidden;
   border-right: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 20% 18%, rgba(102, 240, 201, 0.08), transparent 24%),
+    radial-gradient(circle at 82% 14%, rgba(134, 198, 255, 0.12), transparent 20%),
+    linear-gradient(180deg, rgba(8, 22, 35, 0.94), rgba(5, 14, 22, 0.98));
 }
 
-.mapGrid {
+.mapCanvas {
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.45));
-}
-
-.contourA,
-.contourB,
-.contourC {
-  position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 55% 45% 60% 40%;
-}
-
-.contourA {
-  inset: 12% 18% 34% 14%;
-}
-
-.contourB {
-  inset: 30% 8% 14% 28%;
-}
-
-.contourC {
-  inset: 8% 34% 44% 42%;
-}
-
-.shelfBand {
-  position: absolute;
-  inset: auto -8% 12% 10%;
-  height: 28%;
-  background: linear-gradient(90deg, rgba(255, 212, 122, 0.08), rgba(255, 142, 126, 0.16), rgba(102, 240, 201, 0.08));
-  transform: rotate(-7deg);
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .hud {
@@ -56,15 +25,23 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: 18px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.brand,
+.legend {
+  pointer-events: auto;
 }
 
 .brand {
-  max-width: 400px;
+  max-width: 430px;
   padding: 18px 20px;
-  background: rgba(4, 16, 25, 0.62);
+  background: rgba(4, 16, 25, 0.72);
   border: 1px solid var(--line);
   backdrop-filter: blur(18px);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
 }
 
 .eyebrow {
@@ -88,24 +65,72 @@
 }
 
 .legend {
-  min-width: 190px;
+  min-width: 240px;
   padding: 16px;
-  background: rgba(4, 16, 25, 0.62);
+  background: rgba(4, 16, 25, 0.72);
   border: 1px solid var(--line);
   backdrop-filter: blur(18px);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+}
+
+.legendHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
 }
 
 .legendTitle {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 0.9rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--muted);
 }
 
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e8f6f4;
+}
+
+.temperatureRamp {
+  height: 14px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2444a6 0%, #2f82c7 20%, #2ec4b6 42%, #a8e063 58%, #ffd166 74%, #f77f00 88%, #d62828 100%);
+}
+
+.temperatureScale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.opacityControl {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  color: #dde8ef;
+  font-size: 0.9rem;
+}
+
+.opacityControl input {
+  width: 100%;
+}
+
 .legendList {
   display: grid;
   gap: 10px;
+  margin-top: 14px;
 }
 
 .legendItem {
@@ -116,53 +141,15 @@
   font-size: 0.95rem;
 }
 
-.legendSwatch {
+.legendSwatch,
+.legendSwatchWarm {
   width: 14px;
   height: 14px;
   border-radius: 999px;
 }
 
-.zonesLayer {
-  position: absolute;
-  inset: 0;
-}
-
-.zoneCard {
-  position: absolute;
-  width: 180px;
-  padding: 12px 14px;
-  background: rgba(6, 20, 31, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(14px);
-}
-
-.zoneDot {
-  position: absolute;
-  top: -7px;
-  left: -7px;
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 6px rgba(102, 240, 201, 0.12);
-}
-
-.zoneName {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.zoneMeta {
-  margin: 7px 0 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.zoneSummary {
-  margin: 10px 0 0;
-  font-size: 0.9rem;
-  color: #edf7fb;
+.legendSwatchWarm {
+  background: linear-gradient(180deg, #2ec4b6, #ffd166 65%, #d62828);
 }
 
 .mapFeedback {
@@ -172,7 +159,9 @@
   bottom: 24px;
   display: grid;
   gap: 10px;
-  max-width: 420px;
+  max-width: 460px;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .panel {
@@ -239,6 +228,7 @@
   padding: 12px 14px;
   border: 1px solid var(--line);
   font-size: 0.9rem;
+  backdrop-filter: blur(12px);
 }
 
 .loadingBanner {
@@ -380,7 +370,7 @@
   }
 
   .mapPane {
-    min-height: 68vh;
+    min-height: 72vh;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
@@ -395,8 +385,13 @@
     padding: 18px;
   }
 
-  .zoneCard {
-    width: 150px;
+  .hud {
+    inset: 18px 18px auto 18px;
+  }
+
+  .legend {
+    min-width: 0;
+    width: 100%;
   }
 
   .mapFeedback {

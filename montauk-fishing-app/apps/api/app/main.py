@@ -8,6 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.api.routes.configs import router as configs_router
 from app.api.routes.health import router as health_router
+from app.api.routes.map import router as map_router
 from app.api.routes.trip_logs import router as trip_logs_router
 from app.api.routes.zones import router as zones_router
 from app.config import get_settings
@@ -74,5 +75,6 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(zones_router)
+app.include_router(map_router)
 app.include_router(trip_logs_router)
 app.include_router(configs_router)

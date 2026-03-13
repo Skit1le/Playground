@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, type ChangeEvent } from "react";
+import OffshoreMap from "./OffshoreMap";
 import styles from "./page.module.css";
 
 type Zone = {
@@ -46,18 +47,37 @@ type HealthResponse = {
   database: string;
 };
 
+type SstMapFeature = {
+  type: "Feature";
+  geometry: {
+    type: "Point";
+    coordinates: [number, number];
+  };
+  properties: {
+    sea_surface_temp_f: number;
+  };
+};
+
+type SstMapResponse = {
+  metadata: {
+    date: string;
+    bbox: [number, number, number, number];
+    source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
+    units: "fahrenheit";
+    point_count: number;
+    temp_range_f: [number, number] | null;
+  };
+  data: {
+    type: "FeatureCollection";
+    features: SstMapFeature[];
+  };
+};
+
 const DEFAULT_ISO_DATE = "2026-03-11";
 const DEFAULT_SPECIES = "bluefin";
+const DEFAULT_MAP_BBOX = "-72.4,39.8,-69.8,41.4";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
-
-const zonePositions: Record<string, { top: string; left: string }> = {
-  "hudson-edge-east": { top: "30%", left: "56%" },
-  "cartwright-corner": { top: "54%", left: "68%" },
-  "cox-ledges-south": { top: "62%", left: "34%" },
-  "butterfish-hole": { top: "44%", left: "74%" },
-  "dip-north": { top: "18%", left: "63%" },
-};
 
 function formatDisplayDate(date: Date): string {
   const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
@@ -149,9 +169,12 @@ export default function HomeDashboard() {
   const [tripLogs, setTripLogs] = useState<TripLog[]>([]);
   const [speciesConfigs, setSpeciesConfigs] = useState<SpeciesConfig[]>([]);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [sstMapData, setSstMapData] = useState<SstMapResponse | null>(null);
 
   const [isZonesLoading, setIsZonesLoading] = useState(true);
+  const [isSstMapLoading, setIsSstMapLoading] = useState(true);
   const [zonesError, setZonesError] = useState<string | null>(null);
+  const [sstMapError, setSstMapError] = useState<string | null>(null);
   const [supportingError, setSupportingError] = useState<string | null>(null);
 
   const apiDate = toApiDate(selectedDate);
@@ -225,6 +248,40 @@ export default function HomeDashboard() {
     };
   }, [apiDate, selectedSpecies]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsSstMapLoading(true);
+    setSstMapError(null);
+
+    fetchApi<SstMapResponse>(`/map/sst?date=${apiDate}&bbox=${encodeURIComponent(DEFAULT_MAP_BBOX)}`, {
+      signal: controller.signal,
+      timeoutMs: 5000,
+    })
+      .then((response) => {
+        setSstMapData(response);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message =
+          error instanceof Error
+            ? error.message
+            : `SST overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
+        setSstMapData(null);
+        setSstMapError(message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsSstMapLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiDate]);
+
   const topZone = zones[0] ?? null;
 
   function handleSpeciesChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -265,67 +322,14 @@ export default function HomeDashboard() {
   return (
     <main className={styles.shell}>
       <section className={styles.mapPane}>
-        <div className={styles.mapGrid} />
-        <div className={styles.contourA} />
-        <div className={styles.contourB} />
-        <div className={styles.contourC} />
-        <div className={styles.shelfBand} />
-
-        <div className={styles.hud}>
-          <div className={styles.brand}>
-            <p className={styles.eyebrow}>Montauk Offshore Intelligence</p>
-            <h1 className={styles.title}>Read the water before the run.</h1>
-            <p className={styles.subtitle}>
-              A map-first command surface for offshore planning around Montauk, ready for future SST,
-              chlorophyll, bathymetry, and marine weather overlays.
-            </p>
-          </div>
-
-          <div className={styles.legend}>
-            <p className={styles.legendTitle}>Signal Legend</p>
-            <div className={styles.legendList}>
-              <div className={styles.legendItem}>
-                <span className={styles.legendSwatch} style={{ background: "var(--accent)" }} />
-                High-confidence zone
-              </div>
-              <div className={styles.legendItem}>
-                <span className={styles.legendSwatch} style={{ background: "var(--warning)" }} />
-                Temperature edge
-              </div>
-              <div className={styles.legendItem}>
-                <span className={styles.legendSwatch} style={{ background: "var(--danger)" }} />
-                Shelf transition
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className={styles.zonesLayer}>
-          {zones.map((zone) => {
-            const position = zonePositions[zone.id] ?? { top: "50%", left: "50%" };
-            return (
-              <article
-                key={`${zone.id}-${zone.scored_for_species}-${zone.scored_for_date}`}
-                className={styles.zoneCard}
-                style={{ top: position.top, left: position.left }}
-              >
-                <span className={styles.zoneDot} />
-                <h2 className={styles.zoneName}>{zone.name}</h2>
-                <p className={styles.zoneMeta}>
-                  Score {zone.score} | {zone.distance_nm} nm
-                </p>
-                <p className={styles.zoneSummary}>{zone.summary}</p>
-              </article>
-            );
-          })}
-        </div>
-
-        {(isZonesLoading || zonesError) && (
-          <div className={styles.mapFeedback}>
-            {isZonesLoading && <p className={styles.loadingBanner}>Loading fresh zone rankings...</p>}
-            {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
-          </div>
-        )}
+        <OffshoreMap
+          isSstMapLoading={isSstMapLoading}
+          isZonesLoading={isZonesLoading}
+          sstMapData={sstMapData}
+          sstMapError={sstMapError}
+          zones={zones}
+          zonesError={zonesError}
+        />
       </section>
 
       <aside className={styles.panel}>
@@ -364,9 +368,11 @@ export default function HomeDashboard() {
             </div>
           </div>
           {isZonesLoading && <p className={styles.loadingBanner}>Refreshing zone scores for {selectedSpecies}...</p>}
+          {isSstMapLoading && <p className={styles.loadingBanner}>Refreshing the SST map overlay...</p>}
           {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
+          {sstMapError && <p className={styles.errorBanner}>{sstMapError}</p>}
           {supportingError && <p className={styles.errorBanner}>{supportingError}</p>}
-          {(zonesError || supportingError) && (
+          {(zonesError || sstMapError || supportingError) && (
             <p className={styles.controlHint}>Current API base URL: {API_BASE_URL}</p>
           )}
         </section>

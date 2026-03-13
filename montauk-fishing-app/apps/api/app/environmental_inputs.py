@@ -153,10 +153,10 @@ class SeededTemperatureSource:
 
 
 class SstBackedTemperatureSource:
-    source_name = "processed"
-
     def __init__(self, sst_provider: SstProvider):
         self.sst_provider = sst_provider
+        self.source_name = getattr(sst_provider, "source_name", "processed")
+        self.last_source_name = self.source_name
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         sst = self.sst_provider.get_zone_sst(
@@ -164,6 +164,11 @@ class SstBackedTemperatureSource:
             latitude=zone.center_lat,
             longitude=zone.center_lng,
             trip_date=trip_date,
+        )
+        self.last_source_name = getattr(
+            self.sst_provider,
+            "last_source_name",
+            getattr(self.sst_provider, "source_name", self.source_name),
         )
         return TemperatureSignals(
             sea_surface_temp_f=sst.sea_surface_temp_f,
@@ -184,11 +189,15 @@ class FallbackTemperatureSource:
                 lambda: self.primary.get_temperature(zone, trip_date),
                 self.timeout_seconds,
             )
-            self.last_source_name = "processed"
+            self.last_source_name = getattr(
+                self.primary,
+                "last_source_name",
+                getattr(self.primary, "source_name", "processed"),
+            )
             return temperature
         except TimeoutError:
             logger.warning(
-                "Processed SST lookup timed out for zone '%s' on %s. Falling back to mock SST signals.",
+                "SST lookup timed out for zone '%s' on %s. Falling back to lower-priority SST source.",
                 zone.id,
                 trip_date.isoformat(),
             )
@@ -197,11 +206,15 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = "mock_fallback"
+            self.last_source_name = getattr(
+                self.fallback,
+                "last_source_name",
+                getattr(self.fallback, "source_name", "mock_fallback"),
+            )
             return temperature
         except SstDataUnavailableError:
             logger.warning(
-                "Falling back to mock SST signals for zone '%s' on %s because live SST data was unavailable.",
+                "Falling back to lower-priority SST source for zone '%s' on %s because the primary SST data was unavailable.",
                 zone.id,
                 trip_date.isoformat(),
             )
@@ -210,11 +223,15 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = "mock_fallback"
+            self.last_source_name = getattr(
+                self.fallback,
+                "last_source_name",
+                getattr(self.fallback, "source_name", "mock_fallback"),
+            )
             return temperature
         except Exception:
             logger.exception(
-                "Unexpected SST provider failure for zone '%s' on %s. Falling back to mock SST signals.",
+                "Unexpected SST provider failure for zone '%s' on %s. Falling back to lower-priority SST source.",
                 zone.id,
                 trip_date.isoformat(),
             )
@@ -223,7 +240,11 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = "mock_fallback"
+            self.last_source_name = getattr(
+                self.fallback,
+                "last_source_name",
+                getattr(self.fallback, "source_name", "mock_fallback"),
+            )
             return temperature
 
 
