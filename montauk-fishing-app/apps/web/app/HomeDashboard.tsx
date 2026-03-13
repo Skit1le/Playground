@@ -29,7 +29,7 @@ type Zone = {
   score_breakdown: Record<string, number>;
   score_weights: Record<string, number>;
   weighted_score_breakdown: Record<string, number>;
-  score_explanation: {
+  score_explanation?: {
     headline: string;
     summary: string;
     top_reasons: string[];
@@ -149,6 +149,7 @@ const DEFAULT_SPECIES = "bluefin";
 const DEFAULT_MAP_BBOX = "-72.4,39.8,-69.8,41.4";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
+const ZONES_REQUEST_TIMEOUT_MS = 9000;
 const DEFAULT_SPECIES_CONFIGS: SpeciesConfig[] = [
   {
     species: "bluefin",
@@ -247,6 +248,36 @@ function buildEmptyChlorophyllBreakMapResponse(apiDate: string): ChlorophyllBrea
       type: "FeatureCollection",
       features: [],
     },
+  };
+}
+
+function formatZoneExplanationLabel(factor: string): string {
+  return factor
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildFallbackZoneExplanation(zone: Zone) {
+  const weightedEntries = Object.entries(zone.weighted_score_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
+  const factors = weightedEntries.slice(0, 6).map(([factor, weightedContribution]) => ({
+    factor,
+    label: formatZoneExplanationLabel(factor),
+    raw_value: "Available in zone signals",
+    score: zone.score_breakdown?.[factor] ?? 0,
+    weighted_contribution: weightedContribution,
+    reason: "This factor is contributing meaningfully to the final zone score.",
+  }));
+  const topReasons = factors
+    .filter((factor) => factor.weighted_contribution > 0)
+    .slice(0, 3)
+    .map((factor) => `${factor.label} is adding ${factor.weighted_contribution.toFixed(1)} points to this zone's score.`);
+
+  return {
+    headline: `${zone.name} is ranking well because multiple environmental signals are stacking in its favor.`,
+    summary: `Score ${zone.score.toFixed(1)} with SST ${zone.sea_surface_temp_f.toFixed(1)} F, chlorophyll ${zone.chlorophyll_mg_m3.toFixed(2)} mg/m3, and current ${zone.current_speed_kts.toFixed(1)} kts.`,
+    top_reasons: topReasons,
+    factors,
   };
 }
 
@@ -386,7 +417,7 @@ export default function HomeDashboard() {
 
     fetchApi<Zone[]>(`/zones?date=${apiDate}&species=${selectedSpecies}`, {
       signal: controller.signal,
-      timeoutMs: 5000,
+      timeoutMs: ZONES_REQUEST_TIMEOUT_MS,
     })
       .then((zoneResponse) => {
         setZones(zoneResponse);
@@ -486,6 +517,9 @@ export default function HomeDashboard() {
 
   const topZone = zones[0] ?? null;
   const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? topZone;
+  const selectedZoneExplanation = selectedZone
+    ? selectedZone.score_explanation ?? buildFallbackZoneExplanation(selectedZone)
+    : null;
 
   useEffect(() => {
     if (zones.length === 0) {
@@ -650,17 +684,17 @@ export default function HomeDashboard() {
           {selectedZone ? (
             <div className={styles.explanationCard}>
               <h3 className={styles.featuredTitle}>{selectedZone.name}</h3>
-              <p className={styles.listText}>{selectedZone.score_explanation.headline}</p>
-              <p className={styles.controlHint}>{selectedZone.score_explanation.summary}</p>
+              <p className={styles.listText}>{selectedZoneExplanation?.headline}</p>
+              <p className={styles.controlHint}>{selectedZoneExplanation?.summary}</p>
               <div className={styles.list}>
-                {selectedZone.score_explanation.top_reasons.map((reason) => (
+                {selectedZoneExplanation?.top_reasons.map((reason) => (
                   <div className={styles.listItem} key={reason}>
                     <p className={styles.listText}>{reason}</p>
                   </div>
                 ))}
               </div>
               <div className={styles.list}>
-                {selectedZone.score_explanation.factors.map((factor) => (
+                {selectedZoneExplanation?.factors.map((factor) => (
                   <article className={styles.listItem} key={factor.factor}>
                     <div className={styles.listTitleRow}>
                       <h4 className={styles.listTitle}>{factor.label}</h4>

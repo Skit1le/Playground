@@ -18,9 +18,18 @@ type Zone = {
   summary: string;
   chlorophyll_mg_m3: number;
   nearest_strong_chl_break_distance_nm?: number | null;
-  score_explanation: {
+  score_explanation?: {
     headline: string;
     summary: string;
+    top_reasons?: string[];
+    factors?: Array<{
+      factor: string;
+      label: string;
+      raw_value: string;
+      score: number;
+      weighted_contribution: number;
+      reason: string;
+    }>;
   };
 };
 
@@ -91,10 +100,10 @@ type OffshoreMapProps = {
 
 type MapLibreRuntime = typeof import("maplibre-gl");
 
-const DEFAULT_CENTER: [number, number] = [-71.9442, 41.0359];
+const DEFAULT_CENTER: [number, number] = [-71.72, 40.98];
 const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
-  [-72.45, 39.85],
-  [-69.75, 41.45],
+  [-72.35, 40.25],
+  [-70.6, 41.2],
 ];
 const NAUTICAL_TILES = ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"];
 
