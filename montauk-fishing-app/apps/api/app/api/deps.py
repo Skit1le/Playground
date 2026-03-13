@@ -231,7 +231,11 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
 
 @lru_cache
 def get_sst_map_service() -> SstMapService:
-    return SstMapService(sst_provider=get_sst_provider())
+    settings = get_settings()
+    return SstMapService(
+        sst_provider=get_sst_provider(),
+        target_cells=settings.sst_map_target_cells,
+    )
 
 
 def _build_repository_bundle(
@@ -248,12 +252,15 @@ def _build_repository_bundle(
 
 
 def get_zones_service(session: DbSession) -> ZonesService:
+    settings = get_settings()
     zone_repository, species_config_repository = _build_repository_bundle(session)
 
     return ZonesService(
         zone_repository=zone_repository,
         species_config_repository=species_config_repository,
         environmental_input_provider=get_environmental_input_provider(),
+        sst_break_target_cells=settings.sst_break_scoring_target_cells,
+        strong_break_threshold_f_per_nm=settings.sst_break_strong_threshold_f_per_nm,
     )
 
 

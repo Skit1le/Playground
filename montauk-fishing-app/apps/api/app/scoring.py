@@ -37,6 +37,16 @@ def _score_gradient(value: float) -> float:
     return _clamp(value / 2.5)
 
 
+def _score_temp_break_proximity(distance_nm: float | None) -> float:
+    if distance_nm is None:
+        return 0.0
+    if distance_nm <= 2.0:
+        return 1.0
+    if distance_nm >= 16.0:
+        return 0.0
+    return _clamp(1 - ((distance_nm - 2.0) / 14.0))
+
+
 def _score_structure(distance_nm: float) -> float:
     return _clamp(1 - (distance_nm / 6.0))
 
@@ -69,6 +79,7 @@ class ZoneScoringEngine:
         weights = build_weighted_score_config(config)
         temp_suitability = _score_temperature(signals.sea_surface_temp_f, config)
         temp_gradient = _score_gradient(signals.temp_gradient_f_per_nm)
+        temp_break_proximity = _score_temp_break_proximity(signals.nearest_strong_break_distance_nm)
         structure_proximity = _score_structure(signals.structure_distance_nm)
         chlorophyll_suitability = _score_range(
             signals.chlorophyll_mg_m3,
@@ -87,6 +98,7 @@ class ZoneScoringEngine:
         breakdown = ScoreBreakdown(
             temp_suitability=round(temp_suitability * 100, 1),
             temp_gradient=round(temp_gradient * 100, 1),
+            temp_break_proximity=round(temp_break_proximity * 100, 1),
             structure_proximity=round(structure_proximity * 100, 1),
             chlorophyll_suitability=round(chlorophyll_suitability * 100, 1),
             current_suitability=round(current_suitability * 100, 1),
@@ -95,6 +107,7 @@ class ZoneScoringEngine:
         weighted_breakdown = WeightedScoreBreakdown(
             temp_suitability=round(temp_suitability * weights.temp_suitability * 100, 1),
             temp_gradient=round(temp_gradient * weights.temp_gradient * 100, 1),
+            temp_break_proximity=round(temp_break_proximity * weights.temp_break_proximity * 100, 1),
             structure_proximity=round(structure_proximity * weights.structure_proximity * 100, 1),
             chlorophyll_suitability=round(chlorophyll_suitability * weights.chlorophyll_suitability * 100, 1),
             current_suitability=round(current_suitability * weights.current_suitability * 100, 1),
@@ -104,6 +117,7 @@ class ZoneScoringEngine:
         total = (
             temp_suitability * weights.temp_suitability
             + temp_gradient * weights.temp_gradient
+            + temp_break_proximity * weights.temp_break_proximity
             + structure_proximity * weights.structure_proximity
             + chlorophyll_suitability * weights.chlorophyll_suitability
             + current_suitability * weights.current_suitability
@@ -118,10 +132,21 @@ class ZoneScoringEngine:
         )
 
 
+def _break_weight_for_species(species: str) -> float:
+    if species == "bluefin":
+        return 0.08
+    if species == "yellowfin":
+        return 0.07
+    if species == "mahi":
+        return 0.06
+    return 0.06
+
+
 def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedScoreConfig:
     raw_weights = WeightedScoreConfig(
         temp_suitability=config.temp_suitability_weight,
         temp_gradient=config.temp_gradient_weight,
+        temp_break_proximity=_break_weight_for_species(config.species),
         structure_proximity=config.structure_proximity_weight,
         chlorophyll_suitability=config.chlorophyll_suitability_weight,
         current_suitability=config.current_suitability_weight,
@@ -129,10 +154,11 @@ def build_weighted_score_config(config: SpeciesScoringConfigModel) -> WeightedSc
     )
     total_weight = sum(raw_weights.model_dump().values())
     if total_weight <= 0:
-        equal_weight = round(1 / 6, 4)
+        equal_weight = round(1 / 7, 4)
         return WeightedScoreConfig(
             temp_suitability=equal_weight,
             temp_gradient=equal_weight,
+            temp_break_proximity=equal_weight,
             structure_proximity=equal_weight,
             chlorophyll_suitability=equal_weight,
             current_suitability=equal_weight,

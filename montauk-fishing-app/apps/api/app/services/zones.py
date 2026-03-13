@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from time import perf_counter
 from datetime import date
 
@@ -13,6 +14,7 @@ from app.environmental_inputs import (
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.scoring import ScoreResult, ZoneScoringEngine, build_weighted_score_config
 from app.schemas import RankedZone, SpeciesConfig, ZoneCenter
+from app.services.sst_map import build_sst_cell_signals, nearest_strong_break_distance_nm
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,15 @@ class ZonesService:
         species_config_repository: SpeciesConfigRepository,
         scoring_engine: ZoneScoringEngine | None = None,
         environmental_input_provider: EnvironmentalInputProvider | None = None,
+        sst_break_target_cells: int = 480,
+        strong_break_threshold_f_per_nm: float = 0.05,
     ):
         self.zone_repository = zone_repository
         self.species_config_repository = species_config_repository
         self.scoring_engine = scoring_engine or ZoneScoringEngine()
         self.environmental_input_provider = environmental_input_provider or ZoneEnvironmentalInputService()
+        self.sst_break_target_cells = sst_break_target_cells
+        self.strong_break_threshold_f_per_nm = strong_break_threshold_f_per_nm
 
     def list_ranked_zones(self, species: str, trip_date: date, limit: int) -> list[RankedZone]:
         started_at = perf_counter()
@@ -41,8 +47,15 @@ class ZonesService:
             raise SpeciesConfigNotFoundError(f"No scoring configuration found for species '{species}'.")
 
         zones = self.zone_repository.list_for_species(species)
+        break_distances_by_zone = self._build_zone_break_distances(zones, trip_date)
         ranked_zones = [
-            self._score_zone(zone=zone, config=config, species=species, trip_date=trip_date)
+            self._score_zone(
+                zone=zone,
+                config=config,
+                species=species,
+                trip_date=trip_date,
+                nearest_strong_break_distance_nm=break_distances_by_zone.get(zone.id),
+            )
             for zone in zones
         ]
         ranked_zones.sort(key=lambda zone: zone.score, reverse=True)
@@ -71,9 +84,14 @@ class ZonesService:
         config: SpeciesScoringConfigModel,
         species: str,
         trip_date: date,
+        nearest_strong_break_distance_nm: float | None,
     ) -> RankedZone:
         resolved_inputs = self._resolve_zone_inputs(zone, trip_date)
-        score_result = self.scoring_engine.score(resolved_inputs.signals, config, trip_date)
+        signals = replace(
+            resolved_inputs.signals,
+            nearest_strong_break_distance_nm=nearest_strong_break_distance_nm,
+        )
+        score_result = self.scoring_engine.score(signals, config, trip_date)
         logger.info(
             "Resolved zone environmental sources",
             extra={
@@ -92,7 +110,7 @@ class ZonesService:
                 "weather_source": resolved_inputs.metadata.weather_source,
             },
         )
-        return build_ranked_zone(zone, resolved_inputs.signals, species, trip_date, score_result)
+        return build_ranked_zone(zone, signals, species, trip_date, score_result)
 
     def _resolve_zone_inputs(self, zone: ZoneModel, trip_date: date) -> ResolvedZoneEnvironmentalInputs:
         if hasattr(self.environmental_input_provider, "resolve_zone_inputs"):
@@ -107,6 +125,78 @@ class ZonesService:
                 weather_source="unknown",
             ),
         )
+
+    def _build_zone_break_distances(
+        self,
+        zones: list[ZoneModel],
+        trip_date: date,
+    ) -> dict[str, float | None]:
+        sst_provider = _extract_sst_provider(self.environmental_input_provider)
+        if sst_provider is None or not zones:
+            return {zone.id: None for zone in zones}
+
+        bbox = _resolve_sst_provider_bbox(sst_provider, zones)
+        try:
+            points = sst_provider.get_sst_points(
+                trip_date,
+                min_lat=bbox[1],
+                max_lat=bbox[3],
+                min_lon=bbox[0],
+                max_lon=bbox[2],
+            )
+        except Exception:
+            logger.warning(
+                "Unable to derive SST break distances for /zones request",
+                extra={"trip_date": trip_date.isoformat(), "zone_count": len(zones)},
+            )
+            return {zone.id: None for zone in zones}
+
+        cells = build_sst_cell_signals(points, bbox, self.sst_break_target_cells)
+        return {
+            zone.id: nearest_strong_break_distance_nm(
+                latitude=zone.center_lat,
+                longitude=zone.center_lng,
+                cells=cells,
+                minimum_break_intensity_f_per_nm=self.strong_break_threshold_f_per_nm,
+            )
+            for zone in zones
+        }
+
+
+def _extract_sst_provider(environmental_input_provider: EnvironmentalInputProvider | object):
+    temperature_source = getattr(environmental_input_provider, "temperature_source", None)
+    if temperature_source is None:
+        return None
+    for candidate in (
+        getattr(temperature_source, "sst_provider", None),
+        getattr(getattr(temperature_source, "primary", None), "sst_provider", None),
+        getattr(getattr(temperature_source, "fallback", None), "sst_provider", None),
+    ):
+        if candidate is not None and hasattr(candidate, "get_sst_points"):
+            return candidate
+    return None
+
+
+def _resolve_sst_provider_bbox(
+    sst_provider: object,
+    zones: list[ZoneModel],
+) -> tuple[float, float, float, float]:
+    min_lat = getattr(sst_provider, "min_lat", None)
+    max_lat = getattr(sst_provider, "max_lat", None)
+    min_lon = getattr(sst_provider, "min_lon", None)
+    max_lon = getattr(sst_provider, "max_lon", None)
+    if None not in (min_lat, max_lat, min_lon, max_lon):
+        return (float(min_lon), float(min_lat), float(max_lon), float(max_lat))
+
+    latitudes = [zone.center_lat for zone in zones]
+    longitudes = [zone.center_lng for zone in zones]
+    padding = 0.4
+    return (
+        round(min(longitudes) - padding, 4),
+        round(min(latitudes) - padding, 4),
+        round(max(longitudes) + padding, 4),
+        round(max(latitudes) + padding, 4),
+    )
 
 
 def build_ranked_zone(
@@ -126,6 +216,7 @@ def build_ranked_zone(
         summary=zone.summary,
         sea_surface_temp_f=signals.sea_surface_temp_f,
         temp_gradient_f_per_nm=signals.temp_gradient_f_per_nm,
+        nearest_strong_break_distance_nm=signals.nearest_strong_break_distance_nm,
         structure_distance_nm=signals.structure_distance_nm,
         chlorophyll_mg_m3=signals.chlorophyll_mg_m3,
         current_speed_kts=signals.current_speed_kts,

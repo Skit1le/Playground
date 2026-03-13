@@ -25,6 +25,7 @@ type SstMapFeature = {
   };
   properties: {
     sea_surface_temp_f: number;
+    break_intensity_f_per_nm: number;
   };
 };
 
@@ -37,6 +38,8 @@ type SstMapResponse = {
     point_count: number;
     cell_count: number;
     temp_range_f: [number, number] | null;
+    break_intensity_range?: [number, number] | null;
+    grid_resolution?: [number, number] | null;
   };
   data: {
     type: "FeatureCollection";
@@ -147,6 +150,9 @@ export default function OffshoreMap({
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
   const [sstOpacity, setSstOpacity] = useState(0.62);
+  const [showSstSurface, setShowSstSurface] = useState(true);
+  const [showSstGrid, setShowSstGrid] = useState(false);
+  const [showTempBreaks, setShowTempBreaks] = useState(true);
   const [showNauticalOverlay, setShowNauticalOverlay] = useState(true);
   const [mapReady, setMapReady] = useState(false);
   const [mapRuntimeError, setMapRuntimeError] = useState<string | null>(null);
@@ -224,6 +230,9 @@ export default function OffshoreMap({
           id: "sst-grid-fill",
           type: "fill",
           source: "sst-grid",
+          layout: {
+            visibility: "visible",
+          },
           paint: {
             "fill-color": [
               "interpolate",
@@ -244,17 +253,86 @@ export default function OffshoreMap({
               80,
               "#d62828",
             ],
+            "fill-antialias": true,
             "fill-opacity": sstOpacity,
+          },
+        });
+        map.addLayer({
+          id: "sst-breaks-fill",
+          type: "fill",
+          source: "sst-grid",
+          layout: {
+            visibility: "visible",
+          },
+          paint: {
+            "fill-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_f_per_nm"],
+              0,
+              "rgba(0,0,0,0)",
+              0.012,
+              "rgba(255,245,200,0.16)",
+              0.025,
+              "rgba(255,196,96,0.34)",
+              0.04,
+              "rgba(255,120,54,0.58)",
+              0.06,
+              "rgba(255,74,74,0.78)",
+              0.085,
+              "rgba(255,255,255,0.94)",
+            ],
+            "fill-opacity": 0.82,
           },
         });
         map.addLayer({
           id: "sst-grid-outline",
           type: "line",
           source: "sst-grid",
+          layout: {
+            visibility: "none",
+          },
           paint: {
-            "line-color": "rgba(255, 255, 255, 0.18)",
-            "line-width": 0.55,
-            "line-opacity": Math.max(sstOpacity - 0.18, 0.18),
+            "line-color": "rgba(255, 255, 255, 0.16)",
+            "line-width": 0.45,
+            "line-opacity": 0.22,
+          },
+        });
+        map.addLayer({
+          id: "sst-breaks-outline",
+          type: "line",
+          source: "sst-grid",
+          layout: {
+            visibility: "none",
+          },
+          paint: {
+            "line-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_f_per_nm"],
+              0,
+              "rgba(0,0,0,0)",
+              0.03,
+              "rgba(255,214,122,0.22)",
+              0.055,
+              "rgba(255,122,69,0.56)",
+              0.08,
+              "rgba(255,255,255,0.92)",
+            ],
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_f_per_nm"],
+              0,
+              0,
+              0.03,
+              0.6,
+              0.055,
+              1.1,
+              0.08,
+              1.8,
+            ],
+            "line-opacity": 0.78,
           },
         });
 
@@ -316,7 +394,9 @@ export default function OffshoreMap({
           map.getCanvas().style.cursor = "crosshair";
           popupRef.current
             .setLngLat(event.lngLat)
-            .setHTML(`<strong>${feature.properties.sea_surface_temp_f.toFixed(1)} F</strong><br/>Surface temperature cell`)
+            .setHTML(
+              `<strong>${feature.properties.sea_surface_temp_f.toFixed(1)} F</strong><br/>Break ${feature.properties.break_intensity_f_per_nm.toFixed(3)} F/nm`,
+            )
             .addTo(map);
         });
 
@@ -448,10 +528,38 @@ export default function OffshoreMap({
     if (map.getLayer("sst-grid-fill")) {
       map.setPaintProperty("sst-grid-fill", "fill-opacity", sstOpacity);
     }
-    if (map.getLayer("sst-grid-outline")) {
-      map.setPaintProperty("sst-grid-outline", "line-opacity", Math.max(sstOpacity - 0.18, 0.18));
-    }
   }, [sstOpacity]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+    if (map.getLayer("sst-grid-fill")) {
+      map.setLayoutProperty("sst-grid-fill", "visibility", showSstSurface ? "visible" : "none");
+    }
+    if (map.getLayer("sst-breaks-fill")) {
+      map.setLayoutProperty(
+        "sst-breaks-fill",
+        "visibility",
+        showSstSurface && showTempBreaks ? "visible" : "none",
+      );
+    }
+    if (map.getLayer("sst-grid-outline")) {
+      map.setLayoutProperty(
+        "sst-grid-outline",
+        "visibility",
+        showSstSurface && showSstGrid ? "visible" : "none",
+      );
+    }
+    if (map.getLayer("sst-breaks-outline")) {
+      map.setLayoutProperty(
+        "sst-breaks-outline",
+        "visibility",
+        showSstSurface && showTempBreaks ? "visible" : "none",
+      );
+    }
+  }, [showSstGrid, showSstSurface, showTempBreaks]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -494,8 +602,35 @@ export default function OffshoreMap({
             <span>80 F</span>
           </div>
           <label className={styles.opacityControl}>
+            <span>Show SST surface</span>
+            <input
+              checked={showSstSurface}
+              onChange={(event) => setShowSstSurface(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+          <label className={styles.opacityControl}>
+            <span>Show SST cell boundaries</span>
+            <input
+              checked={showSstGrid}
+              disabled={!showSstSurface}
+              onChange={(event) => setShowSstGrid(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+          <label className={styles.opacityControl}>
+            <span>Show Temp Breaks</span>
+            <input
+              checked={showTempBreaks}
+              disabled={!showSstSurface}
+              onChange={(event) => setShowTempBreaks(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+          <label className={styles.opacityControl}>
             <span>Overlay opacity</span>
             <input
+              disabled={!showSstSurface}
               max="0.95"
               min="0.15"
               onChange={(event) => setSstOpacity(Number(event.target.value))}
@@ -522,6 +657,13 @@ export default function OffshoreMap({
               Backend SST cell surface
             </div>
             <div className={styles.legendItem}>
+              <span
+                className={styles.legendSwatch}
+                style={{ background: "linear-gradient(135deg, rgba(255,196,96,0.6), rgba(255,255,255,0.95))" }}
+              />
+              Temperature break intensity
+            </div>
+            <div className={styles.legendItem}>
               <span className={styles.legendSwatch} style={{ background: "rgba(255, 255, 255, 0.68)" }} />
               Nautical seamark raster
             </div>
@@ -531,6 +673,14 @@ export default function OffshoreMap({
               Visible SST range {sstMapData.metadata.temp_range_f[0].toFixed(1)}-
               {sstMapData.metadata.temp_range_f[1].toFixed(1)} F across {sstMapData.metadata.cell_count} cells from{" "}
               {sstMapData.metadata.point_count} SST points.
+              {sstMapData.metadata.grid_resolution &&
+                ` Grid ${sstMapData.metadata.grid_resolution[0]} x ${sstMapData.metadata.grid_resolution[1]}.`}
+            </p>
+          )}
+          {sstMapData?.metadata.break_intensity_range && (
+            <p className={styles.controlHint}>
+              Break intensity range {sstMapData.metadata.break_intensity_range[0].toFixed(3)}-
+              {sstMapData.metadata.break_intensity_range[1].toFixed(3)} F/nm.
             </p>
           )}
         </div>

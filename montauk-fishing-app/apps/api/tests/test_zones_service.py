@@ -26,7 +26,7 @@ from app.environmental_inputs import (
     ZoneEnvironmentalSignals,
 )
 from app.services.zones import SpeciesConfigNotFoundError, ZonesService
-from app.sst_provider import SstDataUnavailableError, SstObservation
+from app.sst_provider import SstDataUnavailableError, SstObservation, SstPoint
 from app.structure_provider import StructureDataUnavailableError, StructureObservation
 from app.weather_provider import WeatherDataUnavailableError, WeatherObservation
 
@@ -76,16 +76,42 @@ class FakeEnvironmentalInputProvider:
 
 
 class FakeSstProvider:
-    def __init__(self, observation: SstObservation | Exception, source_name: str = "processed"):
+    def __init__(
+        self,
+        observation: SstObservation | Exception | dict[str, SstObservation] = SstObservation(
+            sea_surface_temp_f=66.0,
+            temp_gradient_f_per_nm=1.2,
+        ),
+        source_name: str = "processed",
+        points: tuple[SstPoint, ...] | None = None,
+    ):
         self.observation = observation
         self.source_name = source_name
         self.calls: list[tuple[str, date]] = []
+        self.min_lat = 39.8
+        self.max_lat = 41.4
+        self.min_lon = -72.4
+        self.max_lon = -69.8
+        self.points = points or ()
 
     def get_zone_sst(self, zone_id: str, latitude: float, longitude: float, trip_date: date) -> SstObservation:
         self.calls.append((zone_id, trip_date))
         if isinstance(self.observation, Exception):
             raise self.observation
+        if isinstance(self.observation, dict):
+            return self.observation[zone_id]
         return self.observation
+
+    def get_sst_points(
+        self,
+        trip_date: date,
+        *,
+        min_lat: float | None = None,
+        max_lat: float | None = None,
+        min_lon: float | None = None,
+        max_lon: float | None = None,
+    ) -> tuple[SstPoint, ...]:
+        return self.points
 
 
 class FakeChlorophyllProvider:
@@ -198,14 +224,16 @@ def make_zone(
     zone_id: str,
     name: str,
     distance_nm: int,
+    center_lat: float = 40.95,
+    center_lng: float = -71.88,
 ) -> ZoneModel:
     return ZoneModel(
         id=zone_id,
         name=name,
         species=["bluefin"],
         distance_nm=distance_nm,
-        center_lat=40.95,
-        center_lng=-71.88,
+        center_lat=center_lat,
+        center_lng=center_lng,
         summary=f"{name} summary",
         depth_ft=240,
     )
@@ -247,6 +275,7 @@ class ZonesServiceTestCase(unittest.TestCase):
                 "summary",
                 "sea_surface_temp_f",
                 "temp_gradient_f_per_nm",
+                "nearest_strong_break_distance_nm",
                 "structure_distance_nm",
                 "chlorophyll_mg_m3",
                 "current_speed_kts",
@@ -262,6 +291,9 @@ class ZonesServiceTestCase(unittest.TestCase):
         )
         self.assertEqual(ranked_zones[0].scored_for_species, "bluefin")
         self.assertEqual(ranked_zones[0].scored_for_date, date(2026, 6, 18))
+        self.assertIn("temp_break_proximity", ranked_zones[0].score_breakdown.model_dump())
+        self.assertIn("temp_break_proximity", ranked_zones[0].score_weights.model_dump())
+        self.assertIn("temp_break_proximity", ranked_zones[0].weighted_score_breakdown.model_dump())
 
     def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
         service = ZonesService(
@@ -288,6 +320,119 @@ class ZonesServiceTestCase(unittest.TestCase):
         ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
 
         self.assertGreaterEqual(ranked_zone.score_breakdown.temp_suitability, 90.0)
+
+    def test_list_ranked_zones_rewards_proximity_to_strong_sst_breaks(self) -> None:
+        break_points = (
+            SstPoint(latitude=40.85, longitude=-72.1, sea_surface_temp_f=41.0),
+            SstPoint(latitude=40.95, longitude=-72.1, sea_surface_temp_f=41.0),
+            SstPoint(latitude=41.05, longitude=-72.1, sea_surface_temp_f=41.0),
+            SstPoint(latitude=40.85, longitude=-71.95, sea_surface_temp_f=41.2),
+            SstPoint(latitude=40.95, longitude=-71.95, sea_surface_temp_f=41.1),
+            SstPoint(latitude=41.05, longitude=-71.95, sea_surface_temp_f=41.2),
+            SstPoint(latitude=40.85, longitude=-71.8, sea_surface_temp_f=47.6),
+            SstPoint(latitude=40.95, longitude=-71.8, sea_surface_temp_f=47.9),
+            SstPoint(latitude=41.05, longitude=-71.8, sea_surface_temp_f=47.8),
+            SstPoint(latitude=40.85, longitude=-71.65, sea_surface_temp_f=48.0),
+            SstPoint(latitude=40.95, longitude=-71.65, sea_surface_temp_f=48.0),
+            SstPoint(latitude=41.05, longitude=-71.65, sea_surface_temp_f=48.1),
+        )
+        sst_provider = FakeSstProvider(
+            observation={
+                "break-close": SstObservation(sea_surface_temp_f=46.8, temp_gradient_f_per_nm=2.2),
+                "break-far": SstObservation(sea_surface_temp_f=46.8, temp_gradient_f_per_nm=2.2),
+            },
+            source_name="live",
+            points=break_points,
+        )
+        environmental_input_provider = ZoneEnvironmentalInputService(
+            temperature_source=SstBackedTemperatureSource(sst_provider),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "break-close": {
+                        "sea_surface_temp_f": 46.8,
+                        "temp_gradient_f_per_nm": 2.2,
+                        "structure_distance_nm": 2.0,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.18,
+                    },
+                    "break-far": {
+                        "sea_surface_temp_f": 46.8,
+                        "temp_gradient_f_per_nm": 2.2,
+                        "structure_distance_nm": 2.0,
+                        "chlorophyll_mg_m3": 0.27,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.18,
+                    },
+                }
+            ),
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository(
+                [
+                    make_zone(zone_id="break-close", name="Break Close", distance_nm=58, center_lng=-71.87),
+                    make_zone(zone_id="break-far", name="Break Far", distance_nm=58, center_lng=-71.35),
+                ]
+            ),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=environmental_input_provider,
+            sst_break_target_cells=480,
+            strong_break_threshold_f_per_nm=0.05,
+        )
+
+        ranked_zones = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)
+        close_zone = next(zone for zone in ranked_zones if zone.id == "break-close")
+        far_zone = next(zone for zone in ranked_zones if zone.id == "break-far")
+
+        self.assertIsNotNone(close_zone.nearest_strong_break_distance_nm)
+        self.assertIsNotNone(far_zone.nearest_strong_break_distance_nm)
+        assert close_zone.nearest_strong_break_distance_nm is not None
+        assert far_zone.nearest_strong_break_distance_nm is not None
+        self.assertLess(close_zone.nearest_strong_break_distance_nm, far_zone.nearest_strong_break_distance_nm)
+        self.assertGreater(close_zone.score_breakdown.temp_break_proximity, far_zone.score_breakdown.temp_break_proximity)
+        self.assertGreater(close_zone.weighted_score_breakdown.temp_break_proximity, 0.0)
+
+    def test_list_ranked_zones_exposes_break_distance_with_mock_sst_fallback(self) -> None:
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=ZoneEnvironmentalInputService(
+                temperature_source=SstBackedTemperatureSource(
+                    FakeSstProvider(
+                        observation=SstObservation(sea_surface_temp_f=63.5, temp_gradient_f_per_nm=0.9),
+                        source_name="mock_fallback",
+                        points=(
+                            SstPoint(latitude=40.9, longitude=-72.05, sea_surface_temp_f=63.5),
+                            SstPoint(latitude=40.9, longitude=-71.85, sea_surface_temp_f=67.8),
+                            SstPoint(latitude=41.0, longitude=-72.05, sea_surface_temp_f=63.3),
+                            SstPoint(latitude=41.0, longitude=-71.85, sea_surface_temp_f=68.0),
+                        ),
+                    )
+                ),
+                signal_store=MockZoneEnvironmentalSignalStore(
+                    records={
+                        "prime-edge": {
+                            "sea_surface_temp_f": 63.5,
+                            "temp_gradient_f_per_nm": 0.9,
+                            "structure_distance_nm": 2.6,
+                            "chlorophyll_mg_m3": 0.27,
+                            "current_speed_kts": 1.4,
+                            "current_break_index": 0.73,
+                            "weather_risk_index": 0.22,
+                        }
+                    }
+                ),
+            ),
+            sst_break_target_cells=320,
+            strong_break_threshold_f_per_nm=0.04,
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertIsNotNone(ranked_zone.nearest_strong_break_distance_nm)
+        self.assertGreaterEqual(ranked_zone.score_breakdown.temp_break_proximity, 0.0)
 
     def test_list_ranked_zones_uses_provider_signals_in_response_payload(self) -> None:
         service = ZonesService(

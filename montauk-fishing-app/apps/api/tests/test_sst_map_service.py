@@ -46,7 +46,8 @@ class SstMapServiceTestCase(unittest.TestCase):
                     SstPoint(latitude=40.98, longitude=-71.81, sea_surface_temp_f=67.1),
                 ),
                 source_name="live",
-            )
+            ),
+            target_cells=480,
         )
 
         response = service.get_sst_map(
@@ -59,15 +60,18 @@ class SstMapServiceTestCase(unittest.TestCase):
         self.assertEqual(response.metadata.point_count, 2)
         self.assertGreater(response.metadata.cell_count, 0)
         self.assertEqual(response.metadata.temp_range_f, [66.2, 67.1])
+        self.assertIsNotNone(response.metadata.break_intensity_range)
+        self.assertIsNotNone(response.metadata.grid_resolution)
         self.assertEqual(response.data.type, "FeatureCollection")
         self.assertEqual(response.data.features[0].geometry.type, "Polygon")
+        self.assertGreaterEqual(response.data.features[0].properties.break_intensity_f_per_nm, 0.0)
         self.assertGreaterEqual(response.data.features[0].properties.sea_surface_temp_f, 66.2)
         self.assertLessEqual(response.data.features[0].properties.sea_surface_temp_f, 67.1)
 
     def test_get_sst_map_returns_unavailable_state_when_provider_has_no_points(self) -> None:
         provider = FakeSstProvider(points=SstDataUnavailableError("missing"), source_name="live")
         provider.last_failure_reason = "upstream_request_failed"
-        service = SstMapService(sst_provider=provider)
+        service = SstMapService(sst_provider=provider, target_cells=480)
 
         response = service.get_sst_map(
             trip_date=date(2026, 6, 18),
@@ -78,6 +82,8 @@ class SstMapServiceTestCase(unittest.TestCase):
         self.assertEqual(response.metadata.dataset_id, "noaacwBLENDEDsstDaily")
         self.assertEqual(response.metadata.point_count, 0)
         self.assertEqual(response.metadata.cell_count, 0)
+        self.assertIsNone(response.metadata.break_intensity_range)
+        self.assertIsNone(response.metadata.grid_resolution)
         self.assertEqual(response.data.features, [])
 
 

@@ -59,6 +59,7 @@ type SstMapFeature = {
   };
   properties: {
     sea_surface_temp_f: number;
+    break_intensity_f_per_nm: number;
   };
 };
 
@@ -71,6 +72,8 @@ type SstMapResponse = {
     point_count: number;
     cell_count: number;
     temp_range_f: [number, number] | null;
+    break_intensity_range?: [number, number] | null;
+    grid_resolution?: [number, number] | null;
   };
   data: {
     type: "FeatureCollection";
@@ -156,6 +159,7 @@ function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
       point_count: 0,
       cell_count: 0,
       temp_range_f: null,
+      break_intensity_range: null,
     },
     data: {
       type: "FeatureCollection",

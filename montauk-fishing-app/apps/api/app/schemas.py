@@ -19,6 +19,7 @@ class ZoneCenter(BaseModel):
 class ScoreBreakdown(BaseModel):
     temp_suitability: float
     temp_gradient: float
+    temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     current_suitability: float
@@ -28,6 +29,7 @@ class ScoreBreakdown(BaseModel):
 class WeightedScoreConfig(BaseModel):
     temp_suitability: float
     temp_gradient: float
+    temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     current_suitability: float
@@ -37,6 +39,7 @@ class WeightedScoreConfig(BaseModel):
 class WeightedScoreBreakdown(BaseModel):
     temp_suitability: float
     temp_gradient: float
+    temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
     current_suitability: float
@@ -64,6 +67,7 @@ class RankedZone(BaseModel):
     summary: str
     sea_surface_temp_f: float
     temp_gradient_f_per_nm: float
+    nearest_strong_break_distance_nm: float | None = None
     structure_distance_nm: float
     chlorophyll_mg_m3: float
     current_speed_kts: float
@@ -99,6 +103,7 @@ class SstMapPolygonGeometry(BaseModel):
 
 class SstMapFeatureProperties(BaseModel):
     sea_surface_temp_f: float
+    break_intensity_f_per_nm: float
 
 
 class SstMapFeature(BaseModel):
@@ -121,6 +126,8 @@ class SstMapMetadata(BaseModel):
     point_count: int
     cell_count: int
     temp_range_f: list[float] | None = None
+    break_intensity_range: list[float] | None = None
+    grid_resolution: list[int] | None = None
 
 
 class SstMapResponse(BaseModel):

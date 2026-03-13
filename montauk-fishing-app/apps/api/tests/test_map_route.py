@@ -47,6 +47,7 @@ class MapRouteTestCase(unittest.TestCase):
                     point_count=0,
                     cell_count=0,
                     temp_range_f=None,
+                    break_intensity_range=None,
                 ),
                 data=SstMapFeatureCollection(features=[]),
             )
@@ -71,6 +72,7 @@ class MapRouteTestCase(unittest.TestCase):
                     point_count=0,
                     cell_count=0,
                     temp_range_f=None,
+                    break_intensity_range=None,
                 ),
                 data=SstMapFeatureCollection(features=[]),
             )
@@ -95,6 +97,7 @@ class MapRouteTestCase(unittest.TestCase):
                     point_count=0,
                     cell_count=0,
                     temp_range_f=None,
+                    break_intensity_range=None,
                 ),
                 data=SstMapFeatureCollection(features=[]),
             )

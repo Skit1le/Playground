@@ -52,6 +52,7 @@ class ZoneEnvironmentalSignals:
     current_speed_kts: float
     current_break_index: float
     weather_risk_index: float
+    nearest_strong_break_distance_nm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -210,11 +211,7 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = getattr(
-                self.fallback,
-                "last_source_name",
-                getattr(self.fallback, "source_name", "mock_fallback"),
-            )
+            self.last_source_name = self._resolve_fallback_source_name()
             return temperature
         except SstDataUnavailableError:
             logger.warning(
@@ -227,11 +224,7 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = getattr(
-                self.fallback,
-                "last_source_name",
-                getattr(self.fallback, "source_name", "mock_fallback"),
-            )
+            self.last_source_name = self._resolve_fallback_source_name()
             return temperature
         except Exception:
             logger.exception(
@@ -244,12 +237,18 @@ class FallbackTemperatureSource:
             except Exception:
                 self.last_source_name = "unavailable"
                 raise
-            self.last_source_name = getattr(
-                self.fallback,
-                "last_source_name",
-                getattr(self.fallback, "source_name", "mock_fallback"),
-            )
+            self.last_source_name = self._resolve_fallback_source_name()
             return temperature
+
+    def _resolve_fallback_source_name(self) -> str:
+        resolved = getattr(
+            self.fallback,
+            "last_source_name",
+            getattr(self.fallback, "source_name", "mock_fallback"),
+        )
+        if resolved in {"mock", "mock_fallback"}:
+            return "mock_fallback"
+        return resolved
 
 
 class SeededBathymetrySource:
@@ -710,6 +709,7 @@ class ZoneEnvironmentalInputService:
             signals=ZoneEnvironmentalSignals(
                 sea_surface_temp_f=temperature.sea_surface_temp_f,
                 temp_gradient_f_per_nm=temperature.temp_gradient_f_per_nm,
+                nearest_strong_break_distance_nm=None,
                 structure_distance_nm=bathymetry.structure_distance_nm,
                 chlorophyll_mg_m3=chlorophyll.chlorophyll_mg_m3,
                 current_speed_kts=current.current_speed_kts,
