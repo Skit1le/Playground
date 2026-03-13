@@ -172,6 +172,44 @@ class LiveCoastwatchSstAdapterTestCase(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(url_open.calls), 1)
 
+    def test_get_sst_points_caches_one_live_fetch_per_date_and_bbox(self) -> None:
+        url_open = FakeUrlOpen(
+            "\n".join(
+                [
+                    "time,latitude,longitude,sea_surface_temperature",
+                    "2026-06-18T00:00:00Z,40.95,-71.88,19.0",
+                    "2026-06-18T00:00:00Z,40.92,-71.82,18.0",
+                ]
+            )
+        )
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+        )
+
+        first = adapter.get_sst_points(
+            date(2026, 6, 18),
+            min_lat=40.8,
+            max_lat=41.1,
+            min_lon=-72.0,
+            max_lon=-71.5,
+        )
+        second = adapter.get_sst_points(
+            date(2026, 6, 18),
+            min_lat=40.8,
+            max_lat=41.1,
+            min_lon=-72.0,
+            max_lon=-71.5,
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(url_open.calls), 1)
+
     def test_get_sst_points_returns_filtered_live_grid_points(self) -> None:
         url_open = FakeUrlOpen(
             "\n".join(
@@ -202,6 +240,39 @@ class LiveCoastwatchSstAdapterTestCase(unittest.TestCase):
 
         self.assertEqual(len(points), 1)
         self.assertEqual(points[0].sea_surface_temp_f, 66.2)
+
+    def test_zone_lookup_and_map_lookup_share_same_live_dataset_cache_for_default_bbox(self) -> None:
+        url_open = FakeUrlOpen(
+            "\n".join(
+                [
+                    "time,latitude,longitude,sea_surface_temperature",
+                    "2026-06-18T00:00:00Z,40.95,-71.88,19.0",
+                    "2026-06-18T00:00:00Z,40.92,-71.82,18.0",
+                ]
+            )
+        )
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+        )
+
+        adapter.get_zone_sst("prime-edge", 40.95, -71.88, date(2026, 6, 18))
+        points = adapter.get_sst_points(
+            date(2026, 6, 18),
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+        )
+
+        self.assertEqual(len(points), 2)
+        self.assertEqual(len(url_open.calls), 1)
+        self.assertEqual(adapter.last_dataset_id, "noaacwBLENDEDsstDaily")
 
 
 class FakeSstProvider:
@@ -269,6 +340,25 @@ class FallbackSstProviderTestCase(unittest.TestCase):
 
         self.assertGreaterEqual(len(points), 1)
         self.assertEqual(provider.last_source_name, "mock_fallback")
+
+    def test_get_zone_sst_falls_back_from_live_to_processed(self) -> None:
+        provider = FallbackSstProvider(
+            primary=FakeSstProvider(
+                observation=SstDataUnavailableError("live missing"),
+                points=SstDataUnavailableError("live missing"),
+                source_name="live",
+            ),
+            fallback=FakeSstProvider(
+                observation=SstObservation(sea_surface_temp_f=66.4, temp_gradient_f_per_nm=1.2),
+                points=(SstPoint(latitude=40.95, longitude=-71.88, sea_surface_temp_f=66.4),),
+                source_name="processed",
+            ),
+        )
+
+        observation = provider.get_zone_sst("prime-edge", 40.95, -71.88, date(2026, 6, 18))
+
+        self.assertEqual(observation.sea_surface_temp_f, 66.4)
+        self.assertEqual(provider.last_source_name, "processed")
 
 
 if __name__ == "__main__":

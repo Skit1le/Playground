@@ -15,6 +15,8 @@ class FakeSstProvider:
         self.points = points
         self.source_name = source_name
         self.last_source_name = source_name
+        self.last_dataset_id = "noaacwBLENDEDsstDaily" if source_name == "live" else None
+        self.last_cache_key = "2026-06-18|-72.4,39.8,-69.8,41.4"
 
     def get_zone_sst(self, zone_id: str, latitude: float, longitude: float, trip_date: date) -> SstObservation:
         return SstObservation(sea_surface_temp_f=66.0, temp_gradient_f_per_nm=1.2)
@@ -51,10 +53,14 @@ class SstMapServiceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.metadata.source, "live")
+        self.assertEqual(response.metadata.dataset_id, "noaacwBLENDEDsstDaily")
         self.assertEqual(response.metadata.point_count, 2)
+        self.assertGreater(response.metadata.cell_count, 0)
         self.assertEqual(response.metadata.temp_range_f, [66.2, 67.1])
         self.assertEqual(response.data.type, "FeatureCollection")
-        self.assertEqual(response.data.features[0].geometry.type, "Point")
+        self.assertEqual(response.data.features[0].geometry.type, "Polygon")
+        self.assertGreaterEqual(response.data.features[0].properties.sea_surface_temp_f, 66.2)
+        self.assertLessEqual(response.data.features[0].properties.sea_surface_temp_f, 67.1)
 
     def test_get_sst_map_returns_unavailable_state_when_provider_has_no_points(self) -> None:
         service = SstMapService(
@@ -67,7 +73,9 @@ class SstMapServiceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.metadata.source, "unavailable")
+        self.assertIsNone(response.metadata.dataset_id)
         self.assertEqual(response.metadata.point_count, 0)
+        self.assertEqual(response.metadata.cell_count, 0)
         self.assertEqual(response.data.features, [])
 
 

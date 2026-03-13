@@ -54,8 +54,8 @@ type HealthResponse = {
 type SstMapFeature = {
   type: "Feature";
   geometry: {
-    type: "Point";
-    coordinates: [number, number];
+    type: "Polygon";
+    coordinates: [Array<[number, number]>];
   };
   properties: {
     sea_surface_temp_f: number;
@@ -69,6 +69,7 @@ type SstMapResponse = {
     source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
     units: "fahrenheit";
     point_count: number;
+    cell_count: number;
     temp_range_f: [number, number] | null;
   };
   data: {
@@ -153,6 +154,7 @@ function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
       source: "unavailable",
       units: "fahrenheit",
       point_count: 0,
+      cell_count: 0,
       temp_range_f: null,
     },
     data: {

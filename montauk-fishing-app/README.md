@@ -152,25 +152,34 @@ The backend seeds Montauk offshore waters including Hudson Edge East, Cartwright
 
 Today the environmental input service uses provider-backed SST, chlorophyll, current, structure, and weather paths with fallback to a separate mock signal catalog. Every field in `ZoneEnvironmentalSignals` now resolves through a processed-or-fallback path.
 
-SST is now the first signal with a live-data adapter path: the backend will read processed CoastWatch SST files when available, derive nearest-zone temperature and a simple local gradient, cache repeated lookups, and fall back to the mock SST catalog if processed data is unavailable or invalid.
+SST is now the first signal with a live-data adapter path: the backend can fetch one CoastWatch ERDDAP grid subset for a requested date and bounding box, normalize that upstream dataset into shared internal SST points, derive nearest-zone temperature plus a simple local gradient, and fall back cleanly when that upstream data is unavailable.
 
-SST can now also fetch live CoastWatch ERDDAP grid data on the backend before it checks processed files. The live SST resolution order is:
+The SST resolution order is:
 
 - live CoastWatch ERDDAP grid fetch
 - processed SST file
 - mock SST fallback
 
-The live adapter fetches one SST grid subset per date and bounding box, caches that dataset in memory, and reuses it across all zone lookups for the same request date.
+The live/historical adapter works for both recent and historical dates as long as the configured ERDDAP dataset exposes that time range. It fetches one SST grid subset per `date+bbox`, caches that normalized dataset in memory, and reuses it for both:
 
-The frontend now also consumes a dedicated backend SST map contract at `GET /map/sst`. That endpoint returns a GeoJSON-style point grid plus metadata:
+- zone-level SST extraction in `GET /zones`
+- SST map surface generation in `GET /map/sst`
+
+The frontend now also consumes a dedicated backend SST map contract at `GET /map/sst`. That endpoint returns a GeoJSON SST cell surface plus metadata:
 
 - `metadata.source`: `live`, `processed`, `mock_fallback`, or `unavailable`
-- `metadata.bbox`, `metadata.point_count`, and `metadata.temp_range_f`
-- `data`: GeoJSON `FeatureCollection` of SST points with `sea_surface_temp_f`
+- `metadata.bbox`, `metadata.point_count`, `metadata.cell_count`, `metadata.temp_range_f`, and `metadata.dataset_id` when available
+- `data`: GeoJSON `FeatureCollection` of SST polygon cells with `sea_surface_temp_f`
 
-This is intentionally GeoJSON/grid based rather than raster/tile based because it is the simplest maintainable path for local development: the backend can reuse one cached SST dataset per date, the frontend can render it directly in MapLibre, and the `/zones` response contract stays unchanged.
+This is intentionally GeoJSON/grid based rather than raster/tile based because it is the simplest maintainable path for local development: the backend can reuse one cached SST dataset per `date+bbox`, the frontend can render it directly in MapLibre, and the `/zones` response contract stays unchanged.
 
-Chlorophyll now follows the same adapter path: the backend will read processed CoastWatch chlorophyll files when available, use the nearest usable grid point for `chlorophyll_mg_m3`, cache repeated lookups, and fall back to the mock chlorophyll catalog if processed data is unavailable or invalid.
+Runtime logging now includes SST provenance details so local debugging can distinguish `live`, `processed`, and `mock_fallback` usage. `/map/sst` logs the resolved `source`, `dataset_id`, and SST cache key, and the zones flow logs the SST source plus the dataset/cache key used for zone-level extraction. When the map request bbox matches the default zone-level SST bbox, those logs will show the same cached `date+bbox` dataset key.
+
+Chlorophyll now follows the same live/historical adapter path. The backend can fetch one CoastWatch ERDDAP chlorophyll grid subset per `date+bbox`, normalize that upstream dataset into shared internal chlorophyll points, reuse that dataset for zone extraction, and fall back through:
+
+- live CoastWatch ERDDAP grid fetch
+- processed chlorophyll file
+- mock chlorophyll fallback
 
 Current data now follows the same adapter path: the backend will read processed current files when available, use the nearest usable grid point for `current_speed_kts`, derive a simple local `current_break_index`, cache repeated lookups, and fall back to the mock current catalog if processed data is unavailable or invalid.
 
@@ -191,6 +200,18 @@ To enable live SST fetching, configure the backend with:
 - optional `LIVE_SST_VARIABLE_NAME`
 
 The default live base URL is `https://coastwatch.pfeg.noaa.gov/erddap/griddap`. A common example dataset ID is `noaacwBLENDEDsstDaily`, but confirm the exact dataset you want before enabling live mode.
+
+Repeated SST requests for the same `date+bbox` stay in memory for the lifetime of the API process, so local development refreshes do not re-fetch the upstream ERDDAP dataset unnecessarily. If the live fetch fails, the backend immediately falls back to the processed local SST cache, and if that is unavailable too it falls back to the seeded mock SST catalog.
+
+To enable live chlorophyll fetching, configure the backend with:
+
+- `LIVE_CHLOROPHYLL_ENABLED=true`
+- `LIVE_CHLOROPHYLL_DATASET_ID=<NOAA CoastWatch ERDDAP chlorophyll dataset id>`
+- optional `LIVE_CHLOROPHYLL_BASE_URL`
+- optional `LIVE_CHLOROPHYLL_TIMEOUT_SECONDS`
+- optional `LIVE_CHLOROPHYLL_VARIABLE_NAME`
+
+Repeated chlorophyll requests for the same `date+bbox` stay in memory for the lifetime of the API process, so local development refreshes do not re-fetch the upstream ERDDAP dataset unnecessarily. If the live fetch fails, the backend immediately falls back to the processed local chlorophyll cache, and if that is unavailable too it falls back to the seeded mock chlorophyll catalog.
 
 ## Ingestion Scripts
 

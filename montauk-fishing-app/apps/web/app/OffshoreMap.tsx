@@ -20,8 +20,8 @@ type Zone = {
 type SstMapFeature = {
   type: "Feature";
   geometry: {
-    type: "Point";
-    coordinates: [number, number];
+    type: "Polygon";
+    coordinates: [Array<[number, number]>];
   };
   properties: {
     sea_surface_temp_f: number;
@@ -35,6 +35,7 @@ type SstMapResponse = {
     source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
     units: "fahrenheit";
     point_count: number;
+    cell_count: number;
     temp_range_f: [number, number] | null;
   };
   data: {
@@ -59,6 +60,7 @@ const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
   [-72.45, 39.85],
   [-69.75, 41.45],
 ];
+const NAUTICAL_TILES = ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"];
 
 const BASEMAP_STYLE: {
   version: 8;
@@ -145,6 +147,7 @@ export default function OffshoreMap({
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
   const [sstOpacity, setSstOpacity] = useState(0.62);
+  const [showNauticalOverlay, setShowNauticalOverlay] = useState(true);
   const [mapReady, setMapReady] = useState(false);
   const [mapRuntimeError, setMapRuntimeError] = useState<string | null>(null);
 
@@ -200,23 +203,29 @@ export default function OffshoreMap({
             features: [],
           },
         });
+        map.addSource("nautical-chart", {
+          type: "raster",
+          tiles: NAUTICAL_TILES,
+          tileSize: 256,
+          attribution: '&copy; <a href="https://www.openseamap.org/">OpenSeaMap</a> contributors',
+        });
         map.addLayer({
-          id: "sst-grid-circles",
-          type: "circle",
+          id: "nautical-chart-layer",
+          type: "raster",
+          source: "nautical-chart",
+          layout: {
+            visibility: showNauticalOverlay ? "visible" : "none",
+          },
+          paint: {
+            "raster-opacity": 0.58,
+          },
+        });
+        map.addLayer({
+          id: "sst-grid-fill",
+          type: "fill",
           source: "sst-grid",
           paint: {
-            "circle-radius": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              5,
-              3,
-              7,
-              7,
-              9,
-              12,
-            ],
-            "circle-color": [
+            "fill-color": [
               "interpolate",
               ["linear"],
               ["get", "sea_surface_temp_f"],
@@ -235,9 +244,17 @@ export default function OffshoreMap({
               80,
               "#d62828",
             ],
-            "circle-opacity": sstOpacity,
-            "circle-stroke-color": "rgba(7, 18, 29, 0.45)",
-            "circle-stroke-width": 0.6,
+            "fill-opacity": sstOpacity,
+          },
+        });
+        map.addLayer({
+          id: "sst-grid-outline",
+          type: "line",
+          source: "sst-grid",
+          paint: {
+            "line-color": "rgba(255, 255, 255, 0.18)",
+            "line-width": 0.55,
+            "line-opacity": Math.max(sstOpacity - 0.18, 0.18),
           },
         });
 
@@ -291,19 +308,19 @@ export default function OffshoreMap({
           offset: 12,
         });
 
-        map.on("mousemove", "sst-grid-circles", (event: any) => {
+        map.on("mousemove", "sst-grid-fill", (event: any) => {
           const feature = event.features?.[0] as SstMapFeature | undefined;
           if (!feature || !popupRef.current) {
             return;
           }
           map.getCanvas().style.cursor = "crosshair";
           popupRef.current
-            .setLngLat(feature.geometry.coordinates)
-            .setHTML(`<strong>${feature.properties.sea_surface_temp_f.toFixed(1)} F</strong><br/>Surface temp`)
+            .setLngLat(event.lngLat)
+            .setHTML(`<strong>${feature.properties.sea_surface_temp_f.toFixed(1)} F</strong><br/>Surface temperature cell`)
             .addTo(map);
         });
 
-        map.on("mouseleave", "sst-grid-circles", () => {
+        map.on("mouseleave", "sst-grid-fill", () => {
           map.getCanvas().style.cursor = "";
           popupRef.current?.remove();
         });
@@ -359,8 +376,19 @@ export default function OffshoreMap({
     const source = map.getSource("sst-grid");
     if (source) {
       source.setData(sstGeoJson);
+      if (process.env.NODE_ENV !== "production") {
+        console.info("Mounted SST overlay source", {
+          featureCount: sstGeoJson.features.length,
+          source: sstMapData?.metadata.source ?? "unknown",
+        });
+      }
+      return;
     }
-  }, [mapReady, sstGeoJson]);
+
+    if (process.env.NODE_ENV !== "production" && sstGeoJson.features.length > 0) {
+      console.warn("SST features were loaded but the sst-grid source is missing.");
+    }
+  }, [mapReady, sstGeoJson, sstMapData]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -414,14 +442,32 @@ export default function OffshoreMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.getLayer("sst-grid-circles")) {
+    if (!map) {
       return;
     }
-    map.setPaintProperty("sst-grid-circles", "circle-opacity", sstOpacity);
+    if (map.getLayer("sst-grid-fill")) {
+      map.setPaintProperty("sst-grid-fill", "fill-opacity", sstOpacity);
+    }
+    if (map.getLayer("sst-grid-outline")) {
+      map.setPaintProperty("sst-grid-outline", "line-opacity", Math.max(sstOpacity - 0.18, 0.18));
+    }
   }, [sstOpacity]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("nautical-chart-layer")) {
+      return;
+    }
+    map.setLayoutProperty(
+      "nautical-chart-layer",
+      "visibility",
+      showNauticalOverlay ? "visible" : "none",
+    );
+  }, [showNauticalOverlay]);
 
   const overlayUnavailable =
     Boolean(sstMapError) || Boolean(mapRuntimeError) || sstMapData?.metadata.source === "unavailable";
+  const hasOverlayCells = (sstMapData?.data.features.length ?? 0) > 0;
 
   return (
     <>
@@ -458,6 +504,14 @@ export default function OffshoreMap({
               value={sstOpacity}
             />
           </label>
+          <label className={styles.opacityControl}>
+            <span>Nautical chart overlay</span>
+            <input
+              checked={showNauticalOverlay}
+              onChange={(event) => setShowNauticalOverlay(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
           <div className={styles.legendList}>
             <div className={styles.legendItem}>
               <span className={styles.legendSwatch} style={{ background: "#66f0c9" }} />
@@ -465,13 +519,18 @@ export default function OffshoreMap({
             </div>
             <div className={styles.legendItem}>
               <span className={styles.legendSwatchWarm} />
-              Backend SST point grid
+              Backend SST cell surface
+            </div>
+            <div className={styles.legendItem}>
+              <span className={styles.legendSwatch} style={{ background: "rgba(255, 255, 255, 0.68)" }} />
+              Nautical seamark raster
             </div>
           </div>
           {sstMapData?.metadata.temp_range_f && (
             <p className={styles.controlHint}>
               Visible SST range {sstMapData.metadata.temp_range_f[0].toFixed(1)}-
-              {sstMapData.metadata.temp_range_f[1].toFixed(1)} F across {sstMapData.metadata.point_count} points.
+              {sstMapData.metadata.temp_range_f[1].toFixed(1)} F across {sstMapData.metadata.cell_count} cells from{" "}
+              {sstMapData.metadata.point_count} SST points.
             </p>
           )}
         </div>
@@ -482,6 +541,9 @@ export default function OffshoreMap({
         {isSstMapLoading && <p className={styles.loadingBanner}>Refreshing SST overlay...</p>}
         {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
         {mapRuntimeError && <p className={styles.errorBanner}>{mapRuntimeError}</p>}
+        {!overlayUnavailable && !isSstMapLoading && !hasOverlayCells && (
+          <p className={styles.loadingBanner}>No SST overlay cells were returned for the current map request.</p>
+        )}
         {overlayUnavailable && (
           <p className={styles.errorBanner}>
             SST overlay unavailable. Zone markers remain active while the backend falls back or recovers.

@@ -80,6 +80,12 @@ class ZonesService:
                 "zone_id": zone.id,
                 "trip_date": trip_date.isoformat(),
                 "sst_source": resolved_inputs.metadata.sst_source,
+                "sst_dataset_id": getattr(self.environmental_input_provider.temperature_source, "last_dataset_id", None)
+                if hasattr(self.environmental_input_provider, "temperature_source")
+                else None,
+                "sst_cache_key": getattr(self.environmental_input_provider.temperature_source, "last_cache_key", "")
+                if hasattr(self.environmental_input_provider, "temperature_source")
+                else "",
                 "chlorophyll_source": resolved_inputs.metadata.chlorophyll_source,
                 "current_source": resolved_inputs.metadata.current_source,
                 "bathymetry_source": resolved_inputs.metadata.bathymetry_source,

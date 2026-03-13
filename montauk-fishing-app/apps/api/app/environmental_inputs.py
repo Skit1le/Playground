@@ -157,6 +157,8 @@ class SstBackedTemperatureSource:
         self.sst_provider = sst_provider
         self.source_name = getattr(sst_provider, "source_name", "processed")
         self.last_source_name = self.source_name
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         sst = self.sst_provider.get_zone_sst(
@@ -170,6 +172,8 @@ class SstBackedTemperatureSource:
             "last_source_name",
             getattr(self.sst_provider, "source_name", self.source_name),
         )
+        self.last_dataset_id = getattr(self.sst_provider, "last_dataset_id", None)
+        self.last_cache_key = getattr(self.sst_provider, "last_cache_key", "")
         return TemperatureSignals(
             sea_surface_temp_f=sst.sea_surface_temp_f,
             temp_gradient_f_per_nm=sst.temp_gradient_f_per_nm,
@@ -343,10 +347,12 @@ class SeededChlorophyllSource:
 
 
 class ChlorophyllBackedSource:
-    source_name = "processed"
-
     def __init__(self, chlorophyll_provider: ChlorophyllProvider):
         self.chlorophyll_provider = chlorophyll_provider
+        self.source_name = getattr(chlorophyll_provider, "source_name", "processed")
+        self.last_source_name = self.source_name
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
 
     def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
         observation = self.chlorophyll_provider.get_zone_chlorophyll(
@@ -355,6 +361,13 @@ class ChlorophyllBackedSource:
             longitude=zone.center_lng,
             trip_date=trip_date,
         )
+        self.last_source_name = getattr(
+            self.chlorophyll_provider,
+            "last_source_name",
+            getattr(self.chlorophyll_provider, "source_name", self.source_name),
+        )
+        self.last_dataset_id = getattr(self.chlorophyll_provider, "last_dataset_id", None)
+        self.last_cache_key = getattr(self.chlorophyll_provider, "last_cache_key", "")
         return ChlorophyllSignals(chlorophyll_mg_m3=observation.chlorophyll_mg_m3)
 
 
@@ -371,7 +384,11 @@ class FallbackChlorophyllSource:
                 lambda: self.primary.get_chlorophyll(zone, trip_date),
                 self.timeout_seconds,
             )
-            self.last_source_name = "processed"
+            self.last_source_name = getattr(
+                self.primary,
+                "last_source_name",
+                getattr(self.primary, "source_name", "processed"),
+            )
             return chlorophyll
         except TimeoutError:
             logger.warning(
@@ -672,7 +689,11 @@ class ZoneEnvironmentalInputService:
                 "zone_id": zone.id,
                 "trip_date": trip_date.isoformat(),
                 "sst_source": metadata.sst_source,
+                "sst_dataset_id": getattr(self.temperature_source, "last_dataset_id", None),
+                "sst_cache_key": getattr(self.temperature_source, "last_cache_key", ""),
                 "chlorophyll_source": metadata.chlorophyll_source,
+                "chlorophyll_dataset_id": getattr(self.chlorophyll_source, "last_dataset_id", None),
+                "chlorophyll_cache_key": getattr(self.chlorophyll_source, "last_cache_key", ""),
                 "current_source": metadata.current_source,
                 "bathymetry_source": metadata.bathymetry_source,
                 "weather_source": metadata.weather_source,

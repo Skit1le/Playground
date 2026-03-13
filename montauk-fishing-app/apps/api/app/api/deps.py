@@ -6,7 +6,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.chlorophyll_provider import ProcessedCoastwatchChlorophyllAdapter
+from app.chlorophyll_provider import (
+    FallbackChlorophyllProvider,
+    LiveCoastwatchChlorophyllAdapter,
+    MockChlorophyllAdapter,
+    ProcessedCoastwatchChlorophyllAdapter,
+)
 from app.config import get_settings
 from app.current_provider import ProcessedCurrentAdapter
 from app.db import get_db_session
@@ -61,6 +66,17 @@ def get_processed_sst_provider() -> ProcessedCoastwatchSstAdapter:
 
 
 @lru_cache
+def get_processed_chlorophyll_provider() -> ProcessedCoastwatchChlorophyllAdapter:
+    settings = get_settings()
+    return ProcessedCoastwatchChlorophyllAdapter(
+        min_lat=settings.chlorophyll_bbox_min_lat,
+        max_lat=settings.chlorophyll_bbox_max_lat,
+        min_lon=settings.chlorophyll_bbox_min_lon,
+        max_lon=settings.chlorophyll_bbox_max_lon,
+    )
+
+
+@lru_cache
 def get_live_sst_provider() -> LiveCoastwatchSstAdapter:
     settings = get_settings()
     return LiveCoastwatchSstAdapter(
@@ -73,6 +89,21 @@ def get_live_sst_provider() -> LiveCoastwatchSstAdapter:
         max_lon=settings.sst_bbox_max_lon,
         gradient_radius_nm=settings.sst_gradient_radius_nm,
         timeout_seconds=settings.live_sst_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_live_chlorophyll_provider() -> LiveCoastwatchChlorophyllAdapter:
+    settings = get_settings()
+    return LiveCoastwatchChlorophyllAdapter(
+        dataset_id=settings.live_chlorophyll_dataset_id,
+        base_url=settings.live_chlorophyll_base_url,
+        variable_name=settings.live_chlorophyll_variable_name,
+        min_lat=settings.chlorophyll_bbox_min_lat,
+        max_lat=settings.chlorophyll_bbox_max_lat,
+        min_lon=settings.chlorophyll_bbox_min_lon,
+        max_lon=settings.chlorophyll_bbox_max_lon,
+        timeout_seconds=settings.live_chlorophyll_timeout_seconds,
     )
 
 
@@ -96,16 +127,27 @@ def get_sst_provider() -> FallbackSstProvider:
 
 
 @lru_cache
+def get_chlorophyll_provider() -> FallbackChlorophyllProvider:
+    settings = get_settings()
+    processed_provider = get_processed_chlorophyll_provider()
+    mock_provider = MockChlorophyllAdapter(records=get_signal_store().records)
+    processed_fallback = FallbackChlorophyllProvider(
+        primary=processed_provider,
+        fallback=mock_provider,
+    )
+    if not settings.live_chlorophyll_enabled:
+        return processed_fallback
+    return FallbackChlorophyllProvider(
+        primary=get_live_chlorophyll_provider(),
+        fallback=processed_fallback,
+    )
+
+
+@lru_cache
 def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
     settings = get_settings()
     signal_store = get_signal_store()
     temperature_source = SstBackedTemperatureSource(get_sst_provider())
-    chlorophyll_provider = ProcessedCoastwatchChlorophyllAdapter(
-        min_lat=settings.chlorophyll_bbox_min_lat,
-        max_lat=settings.chlorophyll_bbox_max_lat,
-        min_lon=settings.chlorophyll_bbox_min_lon,
-        max_lon=settings.chlorophyll_bbox_max_lon,
-    )
     current_provider = ProcessedCurrentAdapter(
         min_lat=settings.current_bbox_min_lat,
         max_lat=settings.current_bbox_max_lat,
@@ -126,7 +168,7 @@ def get_environmental_input_provider() -> ZoneEnvironmentalInputService:
         max_lon=settings.weather_bbox_max_lon,
     )
     chlorophyll_source = FallbackChlorophyllSource(
-        primary=ChlorophyllBackedSource(chlorophyll_provider),
+        primary=ChlorophyllBackedSource(get_chlorophyll_provider()),
         fallback=SeededChlorophyllSource(signal_store),
         timeout_seconds=settings.processed_lookup_timeout_seconds,
     )

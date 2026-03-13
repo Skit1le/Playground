@@ -92,9 +92,9 @@ class ZoneQuery(BaseModel):
     species: str = Field(pattern="^(bluefin|yellowfin|mahi)$")
 
 
-class SstMapPointGeometry(BaseModel):
-    type: Literal["Point"] = "Point"
-    coordinates: list[float]
+class SstMapPolygonGeometry(BaseModel):
+    type: Literal["Polygon"] = "Polygon"
+    coordinates: list[list[list[float]]]
 
 
 class SstMapFeatureProperties(BaseModel):
@@ -103,7 +103,7 @@ class SstMapFeatureProperties(BaseModel):
 
 class SstMapFeature(BaseModel):
     type: Literal["Feature"] = "Feature"
-    geometry: SstMapPointGeometry
+    geometry: SstMapPolygonGeometry
     properties: SstMapFeatureProperties
 
 
@@ -116,8 +116,10 @@ class SstMapMetadata(BaseModel):
     date: date
     bbox: list[float]
     source: str
+    dataset_id: str | None = None
     units: Literal["fahrenheit"] = "fahrenheit"
     point_count: int
+    cell_count: int
     temp_range_f: list[float] | None = None
 
 

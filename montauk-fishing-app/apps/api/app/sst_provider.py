@@ -6,7 +6,7 @@ from datetime import date
 from functools import lru_cache
 from io import StringIO
 from math import asin, cos, radians, sin, sqrt
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -15,6 +15,7 @@ from app.ingested_products import load_processed_product
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS, ZONE_CATALOG
 
 _MISSING_POINTS: tuple["SstPoint", ...] = ()
+BBox: TypeAlias = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,21 @@ def _filter_points_to_bbox(
     )
 
 
+def _normalize_bbox(
+    *,
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+) -> BBox:
+    return (
+        round(min_lat, 4),
+        round(max_lat, 4),
+        round(min_lon, 4),
+        round(max_lon, 4),
+    )
+
+
 def _build_observation_from_points(
     *,
     zone_id: str,
@@ -149,7 +165,7 @@ def _build_observation_from_points(
     )
 
 
-class LiveCoastwatchSstAdapter:
+class UpstreamCoastwatchSstAdapter:
     source_name = "live"
 
     def __init__(
@@ -183,22 +199,48 @@ class LiveCoastwatchSstAdapter:
         self.value_column_candidates = value_column_candidates
         self.timeout_seconds = timeout_seconds
         self.open_url = open_url
+        self.last_dataset_id = dataset_id
+        self.last_cache_key = ""
 
-    def _build_csv_url(self, target_date: str) -> str:
+    def _default_bbox(self) -> BBox:
+        return _normalize_bbox(
+            min_lat=self.min_lat,
+            max_lat=self.max_lat,
+            min_lon=self.min_lon,
+            max_lon=self.max_lon,
+        )
+
+    def _resolve_bbox(
+        self,
+        *,
+        min_lat: float | None,
+        max_lat: float | None,
+        min_lon: float | None,
+        max_lon: float | None,
+    ) -> BBox:
+        return _normalize_bbox(
+            min_lat=self.min_lat if min_lat is None else min_lat,
+            max_lat=self.max_lat if max_lat is None else max_lat,
+            min_lon=self.min_lon if min_lon is None else min_lon,
+            max_lon=self.max_lon if max_lon is None else max_lon,
+        )
+
+    def _build_csv_url(self, target_date: str, bbox: BBox) -> str:
+        min_lat, max_lat, min_lon, max_lon = bbox
         query = (
             f"{self.variable_name}[({target_date}T00:00:00Z)]"
-            f"[({self.max_lat}):1:({self.min_lat})]"
-            f"[({self.min_lon}):1:({self.max_lon})]"
+            f"[({max_lat}):1:({min_lat})]"
+            f"[({min_lon}):1:({max_lon})]"
         )
         encoded_query = quote(query, safe="[]():,")
         return f"{self.base_url}/{self.dataset_id}.csv?{encoded_query}"
 
     @lru_cache(maxsize=32)
-    def _load_points(self, target_date: str) -> tuple[SstPoint, ...]:
+    def _load_points(self, target_date: str, bbox: BBox) -> tuple[SstPoint, ...]:
         if not self.dataset_id or self.dataset_id.startswith("CONFIGURE_"):
             return _MISSING_POINTS
 
-        url = self._build_csv_url(target_date)
+        url = self._build_csv_url(target_date, bbox)
         try:
             with self.open_url(url, timeout=self.timeout_seconds) as response:
                 raw_text = response.read().decode("utf-8")
@@ -234,17 +276,24 @@ class LiveCoastwatchSstAdapter:
         min_lon: float | None = None,
         max_lon: float | None = None,
     ) -> tuple[SstPoint, ...]:
-        points = self._load_points(trip_date.isoformat())
-        filtered = _filter_points_to_bbox(
-            points,
+        bbox = self._resolve_bbox(
             min_lat=min_lat,
             max_lat=max_lat,
             min_lon=min_lon,
             max_lon=max_lon,
         )
-        if not filtered:
+        points = _filter_points_to_bbox(
+            self._load_points(trip_date.isoformat(), bbox),
+            min_lat=bbox[0],
+            max_lat=bbox[1],
+            min_lon=bbox[2],
+            max_lon=bbox[3],
+        )
+        if not points:
             raise SstDataUnavailableError(f"No live SST payload found for {trip_date.isoformat()}.")
-        return filtered
+        self.last_dataset_id = self.dataset_id
+        self.last_cache_key = f"{trip_date.isoformat()}|{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}"
+        return points
 
     @lru_cache(maxsize=256)
     def get_zone_sst(
@@ -254,15 +303,21 @@ class LiveCoastwatchSstAdapter:
         longitude: float,
         trip_date: date,
     ) -> SstObservation:
+        bbox = self._default_bbox()
+        self.last_dataset_id = self.dataset_id
+        self.last_cache_key = f"{trip_date.isoformat()}|{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}"
         return _build_observation_from_points(
             zone_id=zone_id,
             latitude=latitude,
             longitude=longitude,
-            points=self._load_points(trip_date.isoformat()),
+            points=self._load_points(trip_date.isoformat(), bbox),
             gradient_radius_nm=self.gradient_radius_nm,
             source_label="live",
             trip_date=trip_date,
         )
+
+
+LiveCoastwatchSstAdapter = UpstreamCoastwatchSstAdapter
 
 
 class ProcessedCoastwatchSstAdapter:
@@ -284,6 +339,8 @@ class ProcessedCoastwatchSstAdapter:
         self.max_lon = max_lon
         self.gradient_radius_nm = gradient_radius_nm
         self.load_product = load_product
+        self.last_dataset_id = None
+        self.last_cache_key = ""
 
     @lru_cache(maxsize=32)
     def _load_points(self, target_date: str) -> tuple[SstPoint, ...]:
@@ -336,6 +393,8 @@ class ProcessedCoastwatchSstAdapter:
         )
         if not filtered:
             raise SstDataUnavailableError(f"No processed SST payload found for {trip_date.isoformat()}.")
+        self.last_dataset_id = None
+        self.last_cache_key = f"{trip_date.isoformat()}|{self.min_lon},{self.min_lat},{self.max_lon},{self.max_lat}"
         return filtered
 
     @lru_cache(maxsize=256)
@@ -346,6 +405,8 @@ class ProcessedCoastwatchSstAdapter:
         longitude: float,
         trip_date: date,
     ) -> SstObservation:
+        self.last_dataset_id = None
+        self.last_cache_key = f"{trip_date.isoformat()}|{self.min_lon},{self.min_lat},{self.max_lon},{self.max_lat}"
         return _build_observation_from_points(
             zone_id=zone_id,
             latitude=latitude,
@@ -368,6 +429,8 @@ class MockSstAdapter:
     ):
         self.zone_catalog = zone_catalog or ZONE_CATALOG
         self.records = records or MOCK_ZONE_ENVIRONMENTAL_SIGNALS
+        self.last_dataset_id = None
+        self.last_cache_key = ""
 
     @lru_cache(maxsize=32)
     def _load_points(self, target_date: str) -> tuple[SstPoint, ...]:
@@ -404,6 +467,8 @@ class MockSstAdapter:
         )
         if not filtered:
             raise SstDataUnavailableError(f"No mock SST payload found for {trip_date.isoformat()}.")
+        self.last_dataset_id = None
+        self.last_cache_key = f"{trip_date.isoformat()}|mock"
         return filtered
 
     @lru_cache(maxsize=256)
@@ -420,6 +485,8 @@ class MockSstAdapter:
         signal_record = self.records.get(zone_id)
         if signal_record is None:
             raise SstDataUnavailableError(f"No mock SST payload found for zone '{zone_id}'.")
+        self.last_dataset_id = None
+        self.last_cache_key = f"{trip_date.isoformat()}|mock"
         return SstObservation(
             sea_surface_temp_f=float(signal_record["sea_surface_temp_f"]),
             temp_gradient_f_per_nm=float(signal_record["temp_gradient_f_per_nm"]),
@@ -433,6 +500,8 @@ class FallbackSstProvider:
         self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
         self.source_name = getattr(primary, "source_name", "processed")
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
 
     def _resolve_fallback_source_name(self) -> str:
         return getattr(
@@ -448,6 +517,18 @@ class FallbackSstProvider:
             getattr(self.primary, "source_name", "processed"),
         )
 
+    def _resolve_fallback_dataset_id(self) -> str | None:
+        return getattr(self.fallback, "last_dataset_id", None)
+
+    def _resolve_primary_dataset_id(self) -> str | None:
+        return getattr(self.primary, "last_dataset_id", None)
+
+    def _resolve_fallback_cache_key(self) -> str:
+        return getattr(self.fallback, "last_cache_key", "")
+
+    def _resolve_primary_cache_key(self) -> str:
+        return getattr(self.primary, "last_cache_key", "")
+
     def get_zone_sst(
         self,
         zone_id: str,
@@ -458,14 +539,20 @@ class FallbackSstProvider:
         try:
             observation = self.primary.get_zone_sst(zone_id, latitude, longitude, trip_date)
             self.last_source_name = self._resolve_primary_source_name()
+            self.last_dataset_id = self._resolve_primary_dataset_id()
+            self.last_cache_key = self._resolve_primary_cache_key()
             return observation
         except (SstDataUnavailableError, TimeoutError):
             observation = self.fallback.get_zone_sst(zone_id, latitude, longitude, trip_date)
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_dataset_id = self._resolve_fallback_dataset_id()
+            self.last_cache_key = self._resolve_fallback_cache_key()
             return observation
         except Exception:
             observation = self.fallback.get_zone_sst(zone_id, latitude, longitude, trip_date)
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_dataset_id = self._resolve_fallback_dataset_id()
+            self.last_cache_key = self._resolve_fallback_cache_key()
             return observation
 
     def get_sst_points(
@@ -486,6 +573,8 @@ class FallbackSstProvider:
                 max_lon=max_lon,
             )
             self.last_source_name = self._resolve_primary_source_name()
+            self.last_dataset_id = self._resolve_primary_dataset_id()
+            self.last_cache_key = self._resolve_primary_cache_key()
             return points
         except (SstDataUnavailableError, TimeoutError):
             points = self.fallback.get_sst_points(
@@ -496,6 +585,8 @@ class FallbackSstProvider:
                 max_lon=max_lon,
             )
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_dataset_id = self._resolve_fallback_dataset_id()
+            self.last_cache_key = self._resolve_fallback_cache_key()
             return points
         except Exception:
             points = self.fallback.get_sst_points(
@@ -506,4 +597,6 @@ class FallbackSstProvider:
                 max_lon=max_lon,
             )
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_dataset_id = self._resolve_fallback_dataset_id()
+            self.last_cache_key = self._resolve_fallback_cache_key()
             return points
