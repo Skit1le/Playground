@@ -1,0 +1,146 @@
+Starting API with py -3 on http://127.0.0.1:8000
+INFO:     Started server process [14892]
+INFO:     Waiting for application startup.
+Database not ready on attempt 1/3. Retrying in 1 seconds.
+Database not ready on attempt 2/3. Retrying in 1 seconds.
+Database not ready on attempt 3/3. Retrying in 1 seconds.
+Database startup check failed; continuing in degraded local mode with seeded fallbacks.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51025 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /configs/species HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59894 - "GET /map/sst?date=2026-03-11&bbox=-72.4,39.8,-69.8,41.4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51802 - "GET /trip-logs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54502 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64914 - "GET /map/sst?date=2026-03-11&bbox=-72.4%2C39.8%2C-69.8%2C41.4 HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:57106 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'butterfish-hole' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'butterfish-hole' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'butterfish-hole' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'butterfish-hole' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:57106 - "GET /zones?date=2026-03-11&species=yellowfin HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:57106 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62936 - "GET /trip-logs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52329 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56748 - "GET /map/sst?date=2026-03-11&bbox=-72.4%2C39.8%2C-69.8%2C41.4 HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:50474 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55220 - "GET /trip-logs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58618 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52330 - "GET /map/sst?date=2026-03-11&bbox=-72.4%2C39.8%2C-69.8%2C41.4 HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:55217 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64394 - "GET /trip-logs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50060 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62349 - "GET /map/sst?date=2026-03-11&bbox=-72.4%2C39.8%2C-69.8%2C41.4 HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:50891 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58337 - "GET /trip-logs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49621 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63750 - "GET /map/sst?date=2026-03-11&bbox=-72.4%2C39.8%2C-69.8%2C41.4 HTTP/1.1" 200 OK
+Falling back to mock structure signals for zone 'cox-ledges-south' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cox-ledges-south' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cox-ledges-south' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cox-ledges-south' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'cartwright-corner' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'cartwright-corner' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'cartwright-corner' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'cartwright-corner' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'hudson-edge-east' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'hudson-edge-east' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'hudson-edge-east' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'hudson-edge-east' on 2026-03-11 because live weather data was unavailable.
+Falling back to mock structure signals for zone 'dip-north' on 2026-03-11 because live structure data was unavailable.
+Falling back to mock chlorophyll signals for zone 'dip-north' on 2026-03-11 because live chlorophyll data was unavailable.
+Falling back to mock current signals for zone 'dip-north' on 2026-03-11 because live current data was unavailable.
+Falling back to mock weather signals for zone 'dip-north' on 2026-03-11 because live weather data was unavailable.
+INFO:     127.0.0.1:59844 - "GET /zones?date=2026-03-11&species=bluefin HTTP/1.1" 200 OK

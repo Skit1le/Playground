@@ -1,4 +1,5 @@
 from datetime import date
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -6,6 +7,7 @@ from app.api.deps import SstMapServiceDep
 from app.schemas import SstMapResponse
 
 router = APIRouter(prefix="/map", tags=["map"])
+logger = logging.getLogger(__name__)
 
 
 def _parse_bbox(value: str) -> tuple[float, float, float, float]:
@@ -38,7 +40,15 @@ def get_sst_map(
     date_value: date = Query(alias="date"),
     bbox: str = Query(),
 ) -> SstMapResponse:
+    parsed_bbox = _parse_bbox(bbox)
+    logger.info(
+        "Handling /map/sst request",
+        extra={
+            "trip_date": date_value.isoformat(),
+            "bbox": list(parsed_bbox),
+        },
+    )
     return sst_map_service.get_sst_map(
         trip_date=date_value,
-        bbox=_parse_bbox(bbox),
+        bbox=parsed_bbox,
     )

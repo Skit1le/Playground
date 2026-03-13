@@ -160,7 +160,9 @@ def get_sst_map_service() -> SstMapService:
     return SstMapService(sst_provider=get_sst_provider())
 
 
-def get_zones_service(session: DbSession) -> ZonesService:
+def _build_repository_bundle(
+    session: Session,
+) -> tuple[ZoneRepository | InMemoryZoneRepository, SpeciesConfigRepository | InMemorySpeciesConfigRepository]:
     try:
         session.execute(text("SELECT 1"))
         zone_repository = ZoneRepository(session)
@@ -168,6 +170,11 @@ def get_zones_service(session: DbSession) -> ZonesService:
     except OperationalError:
         zone_repository = InMemoryZoneRepository()
         species_config_repository = InMemorySpeciesConfigRepository()
+    return zone_repository, species_config_repository
+
+
+def get_zones_service(session: DbSession) -> ZonesService:
+    zone_repository, species_config_repository = _build_repository_bundle(session)
 
     return ZonesService(
         zone_repository=zone_repository,

@@ -82,6 +82,29 @@ const DEFAULT_SPECIES = "bluefin";
 const DEFAULT_MAP_BBOX = "-72.4,39.8,-69.8,41.4";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
+const DEFAULT_SPECIES_CONFIGS: SpeciesConfig[] = [
+  {
+    species: "bluefin",
+    label: "Bluefin Tuna",
+    season_window: "May-November",
+    preferred_temp_f: [58.0, 66.0],
+    notes: "Seeded local fallback used when the API species-config endpoint is unavailable.",
+  },
+  {
+    species: "yellowfin",
+    label: "Yellowfin Tuna",
+    season_window: "July-October",
+    preferred_temp_f: [67.0, 74.0],
+    notes: "Seeded local fallback used when the API species-config endpoint is unavailable.",
+  },
+  {
+    species: "mahi",
+    label: "Mahi",
+    season_window: "June-September",
+    preferred_temp_f: [70.0, 78.0],
+    notes: "Seeded local fallback used when the API species-config endpoint is unavailable.",
+  },
+];
 
 function formatDisplayDate(date: Date): string {
   const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
@@ -120,6 +143,23 @@ function parseDisplayDate(displayDate: string): Date | null {
 
 function getApiUnavailableMessage(path: string): string {
   return `API unavailable at ${API_BASE_URL} while requesting ${path}.`;
+}
+
+function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
+  return {
+    metadata: {
+      date: apiDate,
+      bbox: [-72.4, 39.8, -69.8, 41.4],
+      source: "unavailable",
+      units: "fahrenheit",
+      point_count: 0,
+      temp_range_f: null,
+    },
+    data: {
+      type: "FeatureCollection",
+      features: [],
+    },
+  };
 }
 
 async function fetchApi<T>(
@@ -186,32 +226,61 @@ export default function HomeDashboard() {
   useEffect(() => {
     let isActive = true;
 
-    Promise.all([
+    Promise.allSettled([
       fetchApi<TripLog[]>("/trip-logs"),
       fetchApi<SpeciesConfig[]>("/configs/species"),
       fetchApi<HealthResponse>("/health"),
-    ])
-      .then(([tripLogsResponse, speciesConfigsResponse, healthResponse]) => {
+    ]).then((results) => {
+      if (!isActive) {
+        return;
+      }
+
+      const [tripLogsResult, speciesConfigsResult, healthResult] = results;
+      const errors: string[] = [];
+
+      if (tripLogsResult.status === "fulfilled") {
+        setTripLogs(tripLogsResult.value);
+      } else {
+        errors.push(
+          tripLogsResult.reason instanceof Error
+            ? tripLogsResult.reason.message
+            : "Failed to load trip logs.",
+        );
+        setTripLogs([]);
+      }
+
+      if (speciesConfigsResult.status === "fulfilled") {
+        setSpeciesConfigs(speciesConfigsResult.value);
+      } else {
+        errors.push(
+          speciesConfigsResult.reason instanceof Error
+            ? speciesConfigsResult.reason.message
+            : "Failed to load species config.",
+        );
+        setSpeciesConfigs(DEFAULT_SPECIES_CONFIGS);
+      }
+
+      if (healthResult.status === "fulfilled") {
+        setHealth(healthResult.value);
+      } else {
+        errors.push(
+          healthResult.reason instanceof Error
+            ? healthResult.reason.message
+            : "Failed to load API health status.",
+        );
         if (!isActive) {
           return;
         }
-        setTripLogs(tripLogsResponse);
-        setSpeciesConfigs(speciesConfigsResponse);
-        setHealth(healthResponse);
-      })
-      .catch((error: unknown) => {
-        if (!isActive) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : "Failed to load supporting dashboard data.";
-        setSupportingError(message);
         setHealth({
           status: "unavailable",
           app: "API unavailable",
           environment: "local dev",
           database: "unknown",
         });
-      });
+      }
+
+      setSupportingError(errors.length > 0 ? errors.join(" ") : null);
+    });
 
     return () => {
       isActive = false;
@@ -272,7 +341,7 @@ export default function HomeDashboard() {
           error instanceof Error
             ? error.message
             : `SST overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
-        setSstMapData(null);
+        setSstMapData(buildEmptySstMapResponse(apiDate));
         setSstMapError(message);
       })
       .finally(() => {

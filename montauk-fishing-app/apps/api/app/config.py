@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     weather_bbox_min_lon: float = Field(default=-72.4, alias="WEATHER_BBOX_MIN_LON")
     weather_bbox_max_lon: float = Field(default=-69.8, alias="WEATHER_BBOX_MAX_LON")
     allowed_origins_raw: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
         alias="ALLOWED_ORIGINS",
     )
 

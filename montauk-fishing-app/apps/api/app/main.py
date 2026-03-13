@@ -43,15 +43,18 @@ def wait_for_database(max_attempts: int, delay_seconds: int) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
+    app.state.database_status = "unknown"
     try:
         wait_for_database(
             max_attempts=settings.database_startup_max_attempts,
             delay_seconds=settings.database_startup_delay_seconds,
         )
+        app.state.database_status = "ok"
     except OperationalError:
         if settings.database_required_on_startup:
             raise
+        app.state.database_status = "unavailable"
         logger.warning(
             "Database startup check failed; continuing in degraded local mode with seeded fallbacks."
         )

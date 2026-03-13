@@ -1,16 +1,24 @@
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, Request
 
 from app.config import get_settings
-from app.db import database_is_available
 from app.schemas import HealthResponse
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health", response_model=HealthResponse)
-def healthcheck() -> HealthResponse:
-    database_status = "ok" if settings.database_url and database_is_available() else "unavailable"
+def healthcheck(request: Request) -> HealthResponse:
+    database_status = getattr(request.app.state, "database_status", "unknown")
+    logger.info(
+        "Handling /health request",
+        extra={
+            "database_status": database_status,
+        },
+    )
 
     return HealthResponse(
         status="ok",

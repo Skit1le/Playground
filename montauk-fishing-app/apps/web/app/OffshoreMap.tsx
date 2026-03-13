@@ -52,11 +52,7 @@ type OffshoreMapProps = {
   sstMapError: string | null;
 };
 
-type MapLibreRuntime = {
-  Map: new (...args: any[]) => any;
-  NavigationControl: new (...args: any[]) => any;
-  Popup: new (...args: any[]) => any;
-};
+type MapLibreRuntime = typeof import("maplibre-gl");
 
 const DEFAULT_CENTER: [number, number] = [-71.9442, 41.0359];
 const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
@@ -64,7 +60,22 @@ const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
   [-69.75, 41.45],
 ];
 
-const BASEMAP_STYLE = {
+const BASEMAP_STYLE: {
+  version: 8;
+  sources: {
+    "carto-dark": {
+      type: "raster";
+      tiles: string[];
+      tileSize: number;
+      attribution: string;
+    };
+  };
+  layers: Array<{
+    id: string;
+    type: "raster";
+    source: string;
+  }>;
+} = {
   version: 8,
   sources: {
     "carto-dark": {
@@ -82,7 +93,7 @@ const BASEMAP_STYLE = {
       source: "carto-dark",
     },
   ],
-} as const;
+};
 
 function buildZoneFeatureCollection(zones: Zone[]) {
   return {
@@ -122,54 +133,6 @@ function getSourceLabel(source: string | null): string {
   return "SST source unknown";
 }
 
-function loadMapLibreRuntime(): Promise<MapLibreRuntime> {
-  if (typeof window === "undefined") {
-    return Promise.reject(new Error("Map runtime unavailable during server rendering."));
-  }
-
-  const runtimeWindow = window as Window & { maplibregl?: MapLibreRuntime };
-  if (runtimeWindow.maplibregl) {
-    return Promise.resolve(runtimeWindow.maplibregl);
-  }
-
-  return new Promise((resolve, reject) => {
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-maplibre-runtime="true"]');
-    if (existingScript) {
-      existingScript.addEventListener("load", () => {
-        if (runtimeWindow.maplibregl) {
-          resolve(runtimeWindow.maplibregl);
-          return;
-        }
-        reject(new Error("MapLibre script loaded without exposing window.maplibregl."));
-      });
-      existingScript.addEventListener("error", () => reject(new Error("Failed to load MapLibre script.")));
-      return;
-    }
-
-    if (!document.querySelector('link[data-maplibre-runtime="true"]')) {
-      const stylesheet = document.createElement("link");
-      stylesheet.rel = "stylesheet";
-      stylesheet.href = "https://unpkg.com/maplibre-gl@5.20.0/dist/maplibre-gl.css";
-      stylesheet.dataset.maplibreRuntime = "true";
-      document.head.appendChild(stylesheet);
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/maplibre-gl@5.20.0/dist/maplibre-gl.js";
-    script.async = true;
-    script.dataset.maplibreRuntime = "true";
-    script.onload = () => {
-      if (runtimeWindow.maplibregl) {
-        resolve(runtimeWindow.maplibregl);
-        return;
-      }
-      reject(new Error("MapLibre script loaded without exposing window.maplibregl."));
-    };
-    script.onerror = () => reject(new Error("Failed to load MapLibre script."));
-    document.body.appendChild(script);
-  });
-}
-
 export default function OffshoreMap({
   zones,
   sstMapData,
@@ -205,7 +168,7 @@ export default function OffshoreMap({
 
       let maplibre: MapLibreRuntime;
       try {
-        maplibre = await loadMapLibreRuntime();
+        maplibre = await import("maplibre-gl");
       } catch (error: unknown) {
         setMapRuntimeError(error instanceof Error ? error.message : "Failed to load MapLibre.");
         return;
@@ -218,15 +181,16 @@ export default function OffshoreMap({
         container: mapContainerRef.current,
         style: BASEMAP_STYLE,
         center: DEFAULT_CENTER,
-        zoom: 6.2,
-        minZoom: 4,
-        maxZoom: 12,
-        attributionControl: true,
-      });
+      zoom: 6.2,
+      minZoom: 4,
+      maxZoom: 12,
+      attributionControl: {},
+    });
 
       map.addControl(new maplibre.NavigationControl(), "top-right");
       map.on("load", () => {
         setMapReady(true);
+        map.resize();
         map.fitBounds(DEFAULT_BOUNDS, { padding: 48, duration: 0 });
 
         map.addSource("sst-grid", {
@@ -407,7 +371,46 @@ export default function OffshoreMap({
     if (source) {
       source.setData(zoneGeoJson);
     }
-  }, [mapReady, zoneGeoJson]);
+
+    if (zones.length > 0) {
+      const longitudes = zones.map((zone) => zone.center.lng);
+      const latitudes = zones.map((zone) => zone.center.lat);
+      map.fitBounds(
+        [
+          [Math.min(...longitudes), Math.min(...latitudes)],
+          [Math.max(...longitudes), Math.max(...latitudes)],
+        ],
+        { padding: 72, duration: 0, maxZoom: 7.4 },
+      );
+      return;
+    }
+
+    if (sstMapData?.metadata.bbox) {
+      const [minLng, minLat, maxLng, maxLat] = sstMapData.metadata.bbox;
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        { padding: 56, duration: 0, maxZoom: 7.2 },
+      );
+    }
+  }, [mapReady, zoneGeoJson, zones, sstMapData]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    const handleResize = () => map.resize();
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
