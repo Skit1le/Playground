@@ -32,6 +32,9 @@ type Zone = {
   score_explanation?: {
     headline: string;
     summary: string;
+    best_use_case_summary: string;
+    confidence_score: number;
+    watchouts: string[];
     top_reasons: string[];
     factors: Array<{
       factor: string;
@@ -282,6 +285,9 @@ function buildFallbackZoneExplanation(zone: Zone) {
   return {
     headline: `${zone.name} is ranking well because multiple environmental signals are stacking in its favor.`,
     summary: `Score ${zone.score.toFixed(1)} with SST ${zone.sea_surface_temp_f.toFixed(1)} F, chlorophyll ${zone.chlorophyll_mg_m3.toFixed(2)} mg/m3, and current ${zone.current_speed_kts.toFixed(1)} kts.`,
+    best_use_case_summary: "Best used as a high-priority scouting zone when multiple environmental signals are lining up.",
+    confidence_score: Math.min(100, Math.round(zone.score * 0.9)),
+    watchouts: ["Live water can shift quickly, so confirm the edge position when you arrive."],
     top_reasons: topReasons,
     factors,
   };
@@ -695,6 +701,16 @@ export default function HomeDashboard() {
               <h3 className={styles.featuredTitle}>{selectedZone.name}</h3>
               <p className={styles.listText}>{selectedZoneExplanation?.headline}</p>
               <p className={styles.controlHint}>{selectedZoneExplanation?.summary}</p>
+              <div className={styles.featuredStats}>
+                <div className={styles.stat}>
+                  <p className={styles.statLabel}>Confidence</p>
+                  <p className={styles.statValue}>{selectedZoneExplanation?.confidence_score.toFixed(1)}</p>
+                </div>
+                <div className={styles.stat}>
+                  <p className={styles.statLabel}>Best Use</p>
+                  <p className={styles.listText}>{selectedZoneExplanation?.best_use_case_summary}</p>
+                </div>
+              </div>
               <div className={styles.list}>
                 {selectedZoneExplanation?.top_reasons.map((reason) => (
                   <div className={styles.listItem} key={reason}>
@@ -716,6 +732,18 @@ export default function HomeDashboard() {
                   </article>
                 ))}
               </div>
+              {selectedZoneExplanation && selectedZoneExplanation.watchouts.length > 0 && (
+                <div className={styles.list}>
+                  {selectedZoneExplanation.watchouts.map((watchout) => (
+                    <div className={styles.listItem} key={watchout}>
+                      <div className={styles.listTitleRow}>
+                        <h4 className={styles.listTitle}>Watchout</h4>
+                      </div>
+                      <p className={styles.listText}>{watchout}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className={styles.featuredEmpty}>

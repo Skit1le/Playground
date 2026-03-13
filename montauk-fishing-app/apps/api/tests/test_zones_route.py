@@ -84,6 +84,9 @@ def make_ranked_zone() -> RankedZone:
         score_explanation=ZoneScoreExplanation(
             headline="Prime Edge ranks well because the water setup stacks multiple favorable signals.",
             summary="SST, color, and structure all line up for bluefin.",
+            best_use_case_summary="Best for starting on a defined offshore edge before expanding the search.",
+            confidence_score=84.2,
+            watchouts=["Weather could tighten your working window."],
             top_reasons=[
                 "Species temperature fit: Water temperature lines up with the preferred bluefin range.",
                 "SST break proximity: Closer zones sit nearer to meaningful temperature breaks where bait and pelagics often stack.",

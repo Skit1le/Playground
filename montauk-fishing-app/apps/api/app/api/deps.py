@@ -35,8 +35,11 @@ from app.environmental_inputs import (
 )
 from app.fallback_repositories import InMemorySpeciesConfigRepository, InMemoryZoneRepository
 from app.repositories import SpeciesConfigRepository, ZoneRepository
+from app.repositories import HistoricalZoneScoreSnapshotRepository, TripOutcomeRepository
 from app.services.sst_map import SstMapService
 from app.services.chlorophyll_map import ChlorophyllBreakMapService
+from app.services.outcomes import HistoricalSnapshotService, OutcomeEvaluationService
+from app.services.trip_outcomes import TripOutcomeService
 from app.services.zones import ZonesService
 from app.sst_provider import (
     FallbackSstProvider,
@@ -276,6 +279,31 @@ def get_zones_service(session: DbSession) -> ZonesService:
     )
 
 
+def get_trip_outcome_service(session: DbSession) -> TripOutcomeService:
+    return TripOutcomeService(repository=TripOutcomeRepository(session))
+
+
+def get_historical_snapshot_service(session: DbSession) -> HistoricalSnapshotService:
+    settings = get_settings()
+    zone_repository, species_config_repository = _build_repository_bundle(session)
+    zones_service = ZonesService(
+        zone_repository=zone_repository,
+        species_config_repository=species_config_repository,
+        environmental_input_provider=get_environmental_input_provider(),
+        sst_break_target_cells=settings.sst_break_scoring_target_cells,
+        chlorophyll_break_target_cells=settings.chlorophyll_break_scoring_target_cells,
+        strong_break_threshold_f_per_nm=settings.sst_break_strong_threshold_f_per_nm,
+        strong_chlorophyll_break_threshold_mg_m3_per_nm=settings.chlorophyll_break_strong_threshold_mg_m3_per_nm,
+    )
+    return HistoricalSnapshotService(
+        repository=HistoricalZoneScoreSnapshotRepository(session),
+        zones_service=zones_service,
+        evaluation_service=OutcomeEvaluationService(),
+    )
+
+
 ZonesServiceDep = Annotated[ZonesService, Depends(get_zones_service)]
 SstMapServiceDep = Annotated[SstMapService, Depends(get_sst_map_service)]
 ChlorophyllBreakMapServiceDep = Annotated[ChlorophyllBreakMapService, Depends(get_chlorophyll_break_map_service)]
+TripOutcomeServiceDep = Annotated[TripOutcomeService, Depends(get_trip_outcome_service)]
+HistoricalSnapshotServiceDep = Annotated[HistoricalSnapshotService, Depends(get_historical_snapshot_service)]

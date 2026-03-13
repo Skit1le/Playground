@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date as DateValue, datetime as DateTimeValue
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -78,6 +78,9 @@ class ScoreExplanationFactor(BaseModel):
 class ZoneScoreExplanation(BaseModel):
     headline: str
     summary: str
+    best_use_case_summary: str
+    confidence_score: float
+    watchouts: list[str]
     top_reasons: list[str]
     factors: list[ScoreExplanationFactor]
 
@@ -118,7 +121,7 @@ class RankedZone(BaseModel):
     weighted_score_breakdown: WeightedScoreBreakdown
     score_explanation: ZoneScoreExplanation
     scored_for_species: str
-    scored_for_date: date
+    scored_for_date: DateValue
 
 
 class TripLog(BaseModel):
@@ -132,7 +135,7 @@ class TripLog(BaseModel):
 
 
 class ZoneQuery(BaseModel):
-    date: date
+    date: DateValue
     species: str = Field(pattern="^(bluefin|yellowfin|mahi)$")
 
 
@@ -158,7 +161,7 @@ class SstMapFeatureCollection(BaseModel):
 
 
 class SstMapMetadata(BaseModel):
-    date: date
+    date: DateValue
     bbox: list[float]
     source: str
     dataset_id: str | None = None
@@ -197,7 +200,7 @@ class ChlorophyllBreakMapFeatureCollection(BaseModel):
 
 
 class ChlorophyllBreakMapMetadata(BaseModel):
-    date: date
+    date: DateValue
     bbox: list[float]
     source: str
     dataset_id: str | None = None
@@ -216,7 +219,7 @@ class ChlorophyllBreakMapResponse(BaseModel):
 
 class TripOutcomeRecord(BaseModel):
     id: str
-    date: date
+    date: DateValue
     target_species: str
     zone_id: str | None = None
     latitude: float | None = None
@@ -227,13 +230,59 @@ class TripOutcomeRecord(BaseModel):
     notes: str = ""
 
 
+class TripOutcomeCreate(BaseModel):
+    date: DateValue
+    target_species: str
+    zone_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    catch_success: float = Field(ge=0.0, le=1.0)
+    catch_count: int = 0
+    vessel: str
+    notes: str = ""
+
+
+class TripOutcomeUpdate(BaseModel):
+    date: DateValue | None = None
+    target_species: str | None = None
+    zone_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    catch_success: float | None = Field(default=None, ge=0.0, le=1.0)
+    catch_count: int | None = None
+    vessel: str | None = None
+    notes: str | None = None
+
+
 class HistoricalZoneScoreSnapshot(BaseModel):
-    date: date
+    date: DateValue
     species: str
     zone_id: str
     score: float
     score_breakdown: ScoreBreakdown
+    score_weights: WeightedScoreConfig | None = None
     weighted_score_breakdown: WeightedScoreBreakdown
+
+
+class HistoricalZoneScoreSnapshotRecord(BaseModel):
+    id: int
+    date: DateValue
+    species: str
+    zone_id: str
+    zone_name: str
+    score: float
+    score_breakdown: ScoreBreakdown
+    score_weights: WeightedScoreConfig
+    weighted_score_breakdown: WeightedScoreBreakdown
+    environmental_snapshot: dict[str, float | str | None]
+    recorded_at: DateTimeValue
+
+
+class ZoneSnapshotCaptureResponse(BaseModel):
+    trip_date: DateValue
+    species: str
+    captured_count: int
+    snapshots: list[HistoricalZoneScoreSnapshotRecord]
 
 
 class OutcomeCalibrationGap(BaseModel):

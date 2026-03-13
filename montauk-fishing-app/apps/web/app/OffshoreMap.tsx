@@ -21,6 +21,9 @@ type Zone = {
   score_explanation?: {
     headline: string;
     summary: string;
+    best_use_case_summary: string;
+    confidence_score: number;
+    watchouts: string[];
     top_reasons?: string[];
     factors?: Array<{
       factor: string;
@@ -911,6 +914,18 @@ export default function OffshoreMap({
               <span className={styles.legendSwatch} style={{ background: "rgba(255, 255, 255, 0.68)" }} />
               Nautical seamark raster
             </div>
+          </div>
+          <div className={styles.legendSection}>
+            <p className={styles.legendTitle}>Chlorophyll Breaks</p>
+            <div className={styles.chlorophyllRamp} />
+            <div className={styles.temperatureScale}>
+              <span>Weak</span>
+              <span>Moderate</span>
+              <span>Strong</span>
+            </div>
+            <p className={styles.controlHint}>
+              Green-yellow cells highlight sharper water-color transitions that can mark bait concentration and cleaner feeding lanes.
+            </p>
           </div>
           {sstMapData?.metadata.temp_range_f && (
             <p className={styles.controlHint}>

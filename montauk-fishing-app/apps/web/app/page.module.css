@@ -111,6 +111,13 @@
   background: linear-gradient(90deg, #2444a6 0%, #2f82c7 20%, #2ec4b6 42%, #a8e063 58%, #ffd166 74%, #f77f00 88%, #d62828 100%);
 }
 
+.chlorophyllRamp {
+  height: 14px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(83,255,182,0.16) 0%, rgba(112,246,154,0.35) 35%, rgba(188,255,76,0.65) 68%, rgba(244,255,158,0.95) 100%);
+}
+
 .temperatureScale {
   display: flex;
   justify-content: space-between;
@@ -135,6 +142,12 @@
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+.legendSection {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .legendItem {

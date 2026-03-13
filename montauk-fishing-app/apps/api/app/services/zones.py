@@ -415,6 +415,9 @@ def build_zone_score_explanation(
             f"SST break {_format_distance(signals.nearest_strong_break_distance_nm)}, "
             f"chlorophyll break {_format_distance(signals.nearest_strong_chl_break_distance_nm)}."
         ),
+        best_use_case_summary=_build_best_use_case_summary(species, signals),
+        confidence_score=_build_confidence_score(score_result),
+        watchouts=_build_watchouts(signals, score_result),
         top_reasons=top_reasons,
         factors=ranked_factors,
     )
@@ -424,3 +427,42 @@ def _format_distance(distance_nm: float | None) -> str:
     if distance_nm is None:
         return "not nearby"
     return f"{distance_nm:.1f} nm"
+
+
+def _build_confidence_score(score_result: ScoreResult) -> float:
+    positive_factors = [
+        contribution
+        for contribution in score_result.weighted_breakdown.model_dump().values()
+        if contribution > 0
+    ]
+    concentration_bonus = min(len(positive_factors), 6) / 6
+    return round(min(100.0, (score_result.total * 0.78) + (concentration_bonus * 22)), 1)
+
+
+def _build_watchouts(signals: ZoneEnvironmentalSignals, score_result: ScoreResult) -> list[str]:
+    watchouts: list[str] = []
+    if signals.weather_risk_index >= 0.35:
+        watchouts.append("Weather risk is elevated enough that fishability could drop faster than the score implies.")
+    if signals.nearest_strong_break_distance_nm is None or signals.nearest_strong_break_distance_nm > 8:
+        watchouts.append("Temperature break support is not especially tight, so the edge could feel less defined on arrival.")
+    if signals.nearest_strong_chl_break_distance_nm is None or signals.nearest_strong_chl_break_distance_nm > 8:
+        watchouts.append("Chlorophyll edge support is loose, so water color may not be as crisp as the best overlap zones.")
+    if score_result.breakdown.temp_suitability < 45:
+        watchouts.append("The water temperature is workable, but it is outside the strongest part of the preferred species band.")
+    if score_result.breakdown.structure_proximity < 45:
+        watchouts.append("Structure influence is lighter here, so the area may need visible life before it earns a full commitment.")
+    return watchouts[:3]
+
+
+def _build_best_use_case_summary(species: str, signals: ZoneEnvironmentalSignals) -> str:
+    edge_summary = (
+        f"SST break {_format_distance(signals.nearest_strong_break_distance_nm)} and "
+        f"chlorophyll break {_format_distance(signals.nearest_strong_chl_break_distance_nm)}"
+    )
+    if species == "bluefin":
+        return f"Best for a disciplined bluefin start where you want defined edge water with nearby structure support. {edge_summary}."
+    if species == "yellowfin":
+        return f"Best for working warmer offshore edge water where current and color transitions can hold yellowfin through the day. {edge_summary}."
+    if species == "mahi":
+        return f"Best for hunting cleaner warm water, current seams, and surface life where mahi can stack around subtle edges. {edge_summary}."
+    return f"Best when you want multiple environmental edges lining up instead of relying on one single signal. {edge_summary}."

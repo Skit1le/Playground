@@ -6,10 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
 
+from app.api.routes.admin import router as admin_router
 from app.api.routes.configs import router as configs_router
 from app.api.routes.health import router as health_router
 from app.api.routes.map import router as map_router
 from app.api.routes.trip_logs import router as trip_logs_router
+from app.api.routes.trip_outcomes import router as trip_outcomes_router
 from app.api.routes.zones import router as zones_router
 from app.config import get_settings
 from app.db import SessionLocal
@@ -80,4 +82,6 @@ app.include_router(health_router)
 app.include_router(zones_router)
 app.include_router(map_router)
 app.include_router(trip_logs_router)
+app.include_router(trip_outcomes_router)
 app.include_router(configs_router)
+app.include_router(admin_router)

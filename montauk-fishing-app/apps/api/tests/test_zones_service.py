@@ -324,6 +324,8 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertIn("edge_alignment", ranked_zones[0].weighted_score_breakdown.model_dump())
         self.assertGreater(len(ranked_zones[0].score_explanation.top_reasons), 0)
         self.assertGreater(len(ranked_zones[0].score_explanation.factors), 0)
+        self.assertGreater(ranked_zones[0].score_explanation.confidence_score, 0.0)
+        self.assertTrue(ranked_zones[0].score_explanation.best_use_case_summary)
 
     def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
         service = ZonesService(
