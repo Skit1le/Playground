@@ -144,9 +144,11 @@ type ChlorophyllBreakMapResponse = {
   };
 };
 
+type MapBbox = [number, number, number, number];
+
 const DEFAULT_ISO_DATE = "2026-03-11";
 const DEFAULT_SPECIES = "bluefin";
-const DEFAULT_MAP_BBOX = "-72.4,39.8,-69.8,41.4";
+const DEFAULT_MAP_BBOX: MapBbox = [-72.28, 40.62, -71.02, 41.18];
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
 const ZONES_REQUEST_TIMEOUT_MS = 9000;
@@ -213,11 +215,15 @@ function getApiUnavailableMessage(path: string): string {
   return `API unavailable at ${API_BASE_URL} while requesting ${path}.`;
 }
 
-function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
+function formatBboxParam(bbox: MapBbox): string {
+  return bbox.map((value) => value.toFixed(4)).join(",");
+}
+
+function buildEmptySstMapResponse(apiDate: string, bbox: MapBbox): SstMapResponse {
   return {
     metadata: {
       date: apiDate,
-      bbox: [-72.4, 39.8, -69.8, 41.4],
+      bbox,
       source: "unavailable",
       units: "fahrenheit",
       point_count: 0,
@@ -232,11 +238,11 @@ function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
   };
 }
 
-function buildEmptyChlorophyllBreakMapResponse(apiDate: string): ChlorophyllBreakMapResponse {
+function buildEmptyChlorophyllBreakMapResponse(apiDate: string, bbox: MapBbox): ChlorophyllBreakMapResponse {
   return {
     metadata: {
       date: apiDate,
-      bbox: [-72.4, 39.8, -69.8, 41.4],
+      bbox,
       source: "unavailable",
       units: "mg_m3",
       point_count: 0,
@@ -335,6 +341,7 @@ export default function HomeDashboard() {
   const [sstMapData, setSstMapData] = useState<SstMapResponse | null>(null);
   const [chlorophyllBreakMapData, setChlorophyllBreakMapData] = useState<ChlorophyllBreakMapResponse | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [viewportBbox, setViewportBbox] = useState<MapBbox>(DEFAULT_MAP_BBOX);
 
   const [isZonesLoading, setIsZonesLoading] = useState(true);
   const [isSstMapLoading, setIsSstMapLoading] = useState(true);
@@ -345,6 +352,7 @@ export default function HomeDashboard() {
   const [supportingError, setSupportingError] = useState<string | null>(null);
 
   const apiDate = toApiDate(selectedDate);
+  const bboxParam = formatBboxParam(viewportBbox);
 
   useEffect(() => {
     let isActive = true;
@@ -449,7 +457,7 @@ export default function HomeDashboard() {
     setIsSstMapLoading(true);
     setSstMapError(null);
 
-    fetchApi<SstMapResponse>(`/map/sst?date=${apiDate}&bbox=${encodeURIComponent(DEFAULT_MAP_BBOX)}`, {
+    fetchApi<SstMapResponse>(`/map/sst?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`, {
       signal: controller.signal,
       timeoutMs: 5000,
     })
@@ -464,7 +472,7 @@ export default function HomeDashboard() {
           error instanceof Error
             ? error.message
             : `SST overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
-        setSstMapData(buildEmptySstMapResponse(apiDate));
+        setSstMapData(buildEmptySstMapResponse(apiDate, viewportBbox));
         setSstMapError(message);
       })
       .finally(() => {
@@ -476,7 +484,7 @@ export default function HomeDashboard() {
     return () => {
       controller.abort();
     };
-  }, [apiDate]);
+  }, [apiDate, bboxParam, viewportBbox]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -484,7 +492,7 @@ export default function HomeDashboard() {
     setChlorophyllBreakMapError(null);
 
     fetchApi<ChlorophyllBreakMapResponse>(
-      `/map/chlorophyll-breaks?date=${apiDate}&bbox=${encodeURIComponent(DEFAULT_MAP_BBOX)}`,
+      `/map/chlorophyll-breaks?date=${apiDate}&bbox=${encodeURIComponent(bboxParam)}`,
       {
         signal: controller.signal,
         timeoutMs: 5000,
@@ -501,7 +509,7 @@ export default function HomeDashboard() {
           error instanceof Error
             ? error.message
             : `Chlorophyll break overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
-        setChlorophyllBreakMapData(buildEmptyChlorophyllBreakMapResponse(apiDate));
+        setChlorophyllBreakMapData(buildEmptyChlorophyllBreakMapResponse(apiDate, viewportBbox));
         setChlorophyllBreakMapError(message);
       })
       .finally(() => {
@@ -513,7 +521,7 @@ export default function HomeDashboard() {
     return () => {
       controller.abort();
     };
-  }, [apiDate]);
+  }, [apiDate, bboxParam, viewportBbox]);
 
   const topZone = zones[0] ?? null;
   const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? topZone;
@@ -585,6 +593,7 @@ export default function HomeDashboard() {
           isSstMapLoading={isSstMapLoading}
           isZonesLoading={isZonesLoading}
           onZoneSelect={setSelectedZoneId}
+          onViewportBboxChange={setViewportBbox}
           selectedZoneId={selectedZoneId}
           sstMapData={sstMapData}
           sstMapError={sstMapError}

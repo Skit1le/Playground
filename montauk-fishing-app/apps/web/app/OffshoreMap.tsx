@@ -96,14 +96,15 @@ type OffshoreMapProps = {
   chlorophyllBreakMapError: string | null;
   selectedZoneId: string | null;
   onZoneSelect: (zoneId: string) => void;
+  onViewportBboxChange: (bbox: [number, number, number, number]) => void;
 };
 
 type MapLibreRuntime = typeof import("maplibre-gl");
 
-const DEFAULT_CENTER: [number, number] = [-71.72, 40.98];
+const DEFAULT_CENTER: [number, number] = [-71.94, 41.03];
 const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
-  [-72.35, 40.25],
-  [-70.6, 41.2],
+  [-72.28, 40.62],
+  [-71.02, 41.18],
 ];
 const NAUTICAL_TILES = ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"];
 
@@ -192,10 +193,12 @@ export default function OffshoreMap({
   chlorophyllBreakMapError,
   selectedZoneId,
   onZoneSelect,
+  onViewportBboxChange,
 }: OffshoreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
+  const lastViewportBboxRef = useRef<string>("");
   const [sstOpacity, setSstOpacity] = useState(0.62);
   const [showSstSurface, setShowSstSurface] = useState(true);
   const [showSstGrid, setShowSstGrid] = useState(false);
@@ -222,6 +225,22 @@ export default function OffshoreMap({
       },
     [chlorophyllBreakMapData],
   );
+
+  function emitViewportBbox(map: any) {
+    const bounds = map.getBounds();
+    const bbox: [number, number, number, number] = [
+      Number(bounds.getWest().toFixed(4)),
+      Number(bounds.getSouth().toFixed(4)),
+      Number(bounds.getEast().toFixed(4)),
+      Number(bounds.getNorth().toFixed(4)),
+    ];
+    const key = bbox.join(",");
+    if (lastViewportBboxRef.current === key) {
+      return;
+    }
+    lastViewportBboxRef.current = key;
+    onViewportBboxChange(bbox);
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -257,6 +276,7 @@ export default function OffshoreMap({
         setMapReady(true);
         map.resize();
         map.fitBounds(DEFAULT_BOUNDS, { padding: 48, duration: 0 });
+        emitViewportBbox(map);
 
         map.addSource("sst-grid", {
           type: "geojson",
@@ -612,6 +632,10 @@ export default function OffshoreMap({
             )
             .addTo(map);
         });
+
+        map.on("moveend", () => {
+          emitViewportBbox(map);
+        });
       });
 
       mapRef.current = map;
@@ -625,7 +649,7 @@ export default function OffshoreMap({
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [onViewportBboxChange]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -669,31 +693,7 @@ export default function OffshoreMap({
     if (source) {
       source.setData(zoneGeoJson);
     }
-
-    if (zones.length > 0) {
-      const longitudes = zones.map((zone) => zone.center.lng);
-      const latitudes = zones.map((zone) => zone.center.lat);
-      map.fitBounds(
-        [
-          [Math.min(...longitudes), Math.min(...latitudes)],
-          [Math.max(...longitudes), Math.max(...latitudes)],
-        ],
-        { padding: 72, duration: 0, maxZoom: 7.4 },
-      );
-      return;
-    }
-
-    if (sstMapData?.metadata.bbox) {
-      const [minLng, minLat, maxLng, maxLat] = sstMapData.metadata.bbox;
-      map.fitBounds(
-        [
-          [minLng, minLat],
-          [maxLng, maxLat],
-        ],
-        { padding: 56, duration: 0, maxZoom: 7.2 },
-      );
-    }
-  }, [mapReady, zoneGeoJson, zones, sstMapData]);
+  }, [mapReady, zoneGeoJson]);
 
   useEffect(() => {
     const map = mapRef.current;

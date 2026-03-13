@@ -11,6 +11,7 @@ class FakeChlorophyllProvider:
         self.last_source_name = "live"
         self.last_dataset_id = "chlorophyll-test"
         self.last_cache_key = "2026-06-18|-72.4,39.8,-69.8,41.4"
+        self.calls: list[tuple[date, float | None, float | None, float | None, float | None]] = []
 
     def get_chlorophyll_points(
         self,
@@ -21,6 +22,7 @@ class FakeChlorophyllProvider:
         min_lon: float | None = None,
         max_lon: float | None = None,
     ) -> tuple[ChlorophyllPoint, ...]:
+        self.calls.append((trip_date, min_lat, max_lat, min_lon, max_lon))
         if isinstance(self.points, Exception):
             raise self.points
         return self.points
@@ -63,6 +65,36 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         self.assertEqual(response.metadata.dataset_id, "chlorophyll-test")
         self.assertEqual(response.metadata.point_count, 0)
         self.assertEqual(response.metadata.cell_count, 0)
+
+    def test_get_chlorophyll_break_map_uses_request_date_and_bbox(self) -> None:
+        provider = FakeChlorophyllProvider(
+            (
+                ChlorophyllPoint(latitude=40.9, longitude=-71.9, chlorophyll_mg_m3=0.25),
+                ChlorophyllPoint(latitude=41.0, longitude=-71.8, chlorophyll_mg_m3=0.31),
+            )
+        )
+        service = ChlorophyllBreakMapService(provider, target_cells=36)
+
+        first = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-72.2, 40.7, -71.4, 41.1),
+        )
+        second = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 19),
+            bbox=(-72.0, 40.8, -71.6, 41.0),
+        )
+
+        self.assertEqual(
+            provider.calls,
+            [
+                (date(2026, 6, 18), 40.7, 41.1, -72.2, -71.4),
+                (date(2026, 6, 19), 40.8, 41.0, -72.0, -71.6),
+            ],
+        )
+        self.assertEqual(first.metadata.bbox, [-72.2, 40.7, -71.4, 41.1])
+        self.assertEqual(second.metadata.bbox, [-72.0, 40.8, -71.6, 41.0])
+        self.assertEqual(first.metadata.date.isoformat(), "2026-06-18")
+        self.assertEqual(second.metadata.date.isoformat(), "2026-06-19")
 
 
 if __name__ == "__main__":
