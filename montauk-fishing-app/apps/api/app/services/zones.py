@@ -19,7 +19,7 @@ from app.scoring import (
     build_temp_break_config,
     build_weighted_score_config,
 )
-from app.schemas import RankedZone, SpeciesConfig, ZoneCenter
+from app.schemas import RankedZone, ScoreExplanationFactor, SpeciesConfig, ZoneCenter, ZoneScoreExplanation
 from app.services.chlorophyll_edges import (
     build_chlorophyll_cell_signals,
     nearest_strong_chlorophyll_break_distance_nm,
@@ -309,6 +309,7 @@ def build_ranked_zone(
         score_breakdown=score_result.breakdown,
         score_weights=score_result.weights,
         weighted_score_breakdown=score_result.weighted_breakdown,
+        score_explanation=build_zone_score_explanation(zone, signals, species, score_result),
         scored_for_species=species,
         scored_for_date=trip_date,
     )
@@ -327,3 +328,99 @@ def build_species_config(config: SpeciesScoringConfigModel) -> SpeciesConfig:
         chlorophyll_break_config=build_chlorophyll_break_config(config.species),
         weights=build_weighted_score_config(config),
     )
+
+
+def build_zone_score_explanation(
+    zone: ZoneModel,
+    signals: ZoneEnvironmentalSignals,
+    species: str,
+    score_result: ScoreResult,
+) -> ZoneScoreExplanation:
+    factors = [
+        ScoreExplanationFactor(
+            factor="temp_suitability",
+            label="Species temperature fit",
+            raw_value=f"{signals.sea_surface_temp_f:.1f} F",
+            score=score_result.breakdown.temp_suitability,
+            weighted_contribution=score_result.weighted_breakdown.temp_suitability,
+            reason=f"Water temperature lines up with the preferred {species} range.",
+        ),
+        ScoreExplanationFactor(
+            factor="temp_break_proximity",
+            label="SST break proximity",
+            raw_value=_format_distance(signals.nearest_strong_break_distance_nm),
+            score=score_result.breakdown.temp_break_proximity,
+            weighted_contribution=score_result.weighted_breakdown.temp_break_proximity,
+            reason="Closer zones sit nearer to meaningful temperature breaks where bait and pelagics often stack.",
+        ),
+        ScoreExplanationFactor(
+            factor="chlorophyll_break_proximity",
+            label="Chlorophyll edge proximity",
+            raw_value=_format_distance(signals.nearest_strong_chl_break_distance_nm),
+            score=score_result.breakdown.chlorophyll_break_proximity,
+            weighted_contribution=score_result.weighted_breakdown.chlorophyll_break_proximity,
+            reason="Nearby water-color breaks can mark bait concentration and cleaner feeding lanes.",
+        ),
+        ScoreExplanationFactor(
+            factor="edge_alignment",
+            label="Edge overlap",
+            raw_value=f"SST {score_result.breakdown.temp_break_proximity:.1f} / CHL {score_result.breakdown.chlorophyll_break_proximity:.1f}",
+            score=score_result.breakdown.edge_alignment,
+            weighted_contribution=score_result.weighted_breakdown.edge_alignment,
+            reason="This bonus only grows when both the temperature front and color edge are nearby together.",
+        ),
+        ScoreExplanationFactor(
+            factor="structure_proximity",
+            label="Structure proximity",
+            raw_value=f"{signals.structure_distance_nm:.1f} nm",
+            score=score_result.breakdown.structure_proximity,
+            weighted_contribution=score_result.weighted_breakdown.structure_proximity,
+            reason="Nearby contour or structure influence helps hold bait and predators.",
+        ),
+        ScoreExplanationFactor(
+            factor="chlorophyll_suitability",
+            label="Chlorophyll suitability",
+            raw_value=f"{signals.chlorophyll_mg_m3:.2f} mg/m3",
+            score=score_result.breakdown.chlorophyll_suitability,
+            weighted_contribution=score_result.weighted_breakdown.chlorophyll_suitability,
+            reason="Absolute chlorophyll level still matters separately from the edge itself.",
+        ),
+        ScoreExplanationFactor(
+            factor="current_suitability",
+            label="Current setup",
+            raw_value=f"{signals.current_speed_kts:.1f} kts / break {signals.current_break_index:.2f}",
+            score=score_result.breakdown.current_suitability,
+            weighted_contribution=score_result.weighted_breakdown.current_suitability,
+            reason="Current speed and current edges help define productive drifts and bait positioning.",
+        ),
+        ScoreExplanationFactor(
+            factor="weather_fishability",
+            label="Fishable weather",
+            raw_value=f"risk {signals.weather_risk_index:.2f}",
+            score=score_result.breakdown.weather_fishability,
+            weighted_contribution=score_result.weighted_breakdown.weather_fishability,
+            reason="Good scores here mean the zone looks workable, not just theoretically productive.",
+        ),
+    ]
+    ranked_factors = sorted(factors, key=lambda factor: factor.weighted_contribution, reverse=True)
+    top_reasons = [
+        f"{factor.label}: {factor.reason}"
+        for factor in ranked_factors[:3]
+        if factor.weighted_contribution > 0
+    ]
+    return ZoneScoreExplanation(
+        headline=f"{zone.name} ranks well for {species} because the water setup is stacking multiple favorable signals.",
+        summary=(
+            f"SST {signals.sea_surface_temp_f:.1f} F, chlorophyll {signals.chlorophyll_mg_m3:.2f} mg/m3, "
+            f"SST break {_format_distance(signals.nearest_strong_break_distance_nm)}, "
+            f"chlorophyll break {_format_distance(signals.nearest_strong_chl_break_distance_nm)}."
+        ),
+        top_reasons=top_reasons,
+        factors=ranked_factors,
+    )
+
+
+def _format_distance(distance_nm: float | None) -> str:
+    if distance_nm is None:
+        return "not nearby"
+    return f"{distance_nm:.1f} nm"

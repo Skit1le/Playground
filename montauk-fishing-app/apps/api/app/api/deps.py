@@ -36,6 +36,7 @@ from app.environmental_inputs import (
 from app.fallback_repositories import InMemorySpeciesConfigRepository, InMemoryZoneRepository
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.services.sst_map import SstMapService
+from app.services.chlorophyll_map import ChlorophyllBreakMapService
 from app.services.zones import ZonesService
 from app.sst_provider import (
     FallbackSstProvider,
@@ -238,6 +239,15 @@ def get_sst_map_service() -> SstMapService:
     )
 
 
+@lru_cache
+def get_chlorophyll_break_map_service() -> ChlorophyllBreakMapService:
+    settings = get_settings()
+    return ChlorophyllBreakMapService(
+        chlorophyll_provider=get_chlorophyll_provider(),
+        target_cells=settings.chlorophyll_break_scoring_target_cells,
+    )
+
+
 def _build_repository_bundle(
     session: Session,
 ) -> tuple[ZoneRepository | InMemoryZoneRepository, SpeciesConfigRepository | InMemorySpeciesConfigRepository]:
@@ -268,3 +278,4 @@ def get_zones_service(session: DbSession) -> ZonesService:
 
 ZonesServiceDep = Annotated[ZonesService, Depends(get_zones_service)]
 SstMapServiceDep = Annotated[SstMapService, Depends(get_sst_map_service)]
+ChlorophyllBreakMapServiceDep = Annotated[ChlorophyllBreakMapService, Depends(get_chlorophyll_break_map_service)]

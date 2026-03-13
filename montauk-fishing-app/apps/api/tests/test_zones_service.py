@@ -306,6 +306,7 @@ class ZonesServiceTestCase(unittest.TestCase):
                 "score_breakdown",
                 "score_weights",
                 "weighted_score_breakdown",
+                "score_explanation",
                 "scored_for_species",
                 "scored_for_date",
             },
@@ -321,6 +322,8 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertIn("temp_break_proximity", ranked_zones[0].weighted_score_breakdown.model_dump())
         self.assertIn("chlorophyll_break_proximity", ranked_zones[0].weighted_score_breakdown.model_dump())
         self.assertIn("edge_alignment", ranked_zones[0].weighted_score_breakdown.model_dump())
+        self.assertGreater(len(ranked_zones[0].score_explanation.top_reasons), 0)
+        self.assertGreater(len(ranked_zones[0].score_explanation.factors), 0)
 
     def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
         service = ZonesService(

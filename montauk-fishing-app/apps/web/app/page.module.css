@@ -300,6 +300,34 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+.listItem[role="button"] {
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.listItem[role="button"]:hover,
+.listItem[role="button"]:focus-visible {
+  border-color: rgba(102, 240, 201, 0.42);
+  background: rgba(102, 240, 201, 0.08);
+  outline: none;
+}
+
+.selectedListItem {
+  border-color: rgba(255, 181, 95, 0.56);
+  background: linear-gradient(180deg, rgba(255, 181, 95, 0.14), rgba(255, 255, 255, 0.04));
+}
+
+.explanationCard {
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    radial-gradient(circle at top right, rgba(102, 240, 201, 0.08), transparent 34%),
+    rgba(255, 255, 255, 0.03);
+}
+
 .listTitleRow {
   display: flex;
   justify-content: space-between;

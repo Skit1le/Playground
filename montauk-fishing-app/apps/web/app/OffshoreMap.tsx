@@ -14,7 +14,26 @@ type Zone = {
   score: number;
   sea_surface_temp_f: number;
   temp_gradient_f_per_nm: number;
+  nearest_strong_break_distance_nm?: number | null;
   summary: string;
+  chlorophyll_mg_m3: number;
+  nearest_strong_chl_break_distance_nm?: number | null;
+  score_explanation: {
+    headline: string;
+    summary: string;
+  };
+};
+
+type ChlorophyllBreakMapFeature = {
+  type: "Feature";
+  geometry: {
+    type: "Polygon";
+    coordinates: [Array<[number, number]>];
+  };
+  properties: {
+    chlorophyll_mg_m3: number;
+    break_intensity_mg_m3_per_nm: number;
+  };
 };
 
 type SstMapFeature = {
@@ -50,10 +69,24 @@ type SstMapResponse = {
 type OffshoreMapProps = {
   zones: Zone[];
   sstMapData: SstMapResponse | null;
+  chlorophyllBreakMapData: {
+    metadata: {
+      source: string;
+      break_intensity_range_mg_m3_per_nm?: [number, number] | null;
+    };
+    data: {
+      type: "FeatureCollection";
+      features: ChlorophyllBreakMapFeature[];
+    };
+  } | null;
   isZonesLoading: boolean;
   isSstMapLoading: boolean;
+  isChlorophyllBreakMapLoading: boolean;
   zonesError: string | null;
   sstMapError: string | null;
+  chlorophyllBreakMapError: string | null;
+  selectedZoneId: string | null;
+  onZoneSelect: (zoneId: string) => void;
 };
 
 type MapLibreRuntime = typeof import("maplibre-gl");
@@ -141,10 +174,15 @@ function getSourceLabel(source: string | null): string {
 export default function OffshoreMap({
   zones,
   sstMapData,
+  chlorophyllBreakMapData,
   isZonesLoading,
   isSstMapLoading,
+  isChlorophyllBreakMapLoading,
   zonesError,
   sstMapError,
+  chlorophyllBreakMapError,
+  selectedZoneId,
+  onZoneSelect,
 }: OffshoreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -153,6 +191,7 @@ export default function OffshoreMap({
   const [showSstSurface, setShowSstSurface] = useState(true);
   const [showSstGrid, setShowSstGrid] = useState(false);
   const [showTempBreaks, setShowTempBreaks] = useState(true);
+  const [showChlorophyllBreaks, setShowChlorophyllBreaks] = useState(true);
   const [showNauticalOverlay, setShowNauticalOverlay] = useState(true);
   const [mapReady, setMapReady] = useState(false);
   const [mapRuntimeError, setMapRuntimeError] = useState<string | null>(null);
@@ -165,6 +204,14 @@ export default function OffshoreMap({
         features: [],
       },
     [sstMapData],
+  );
+  const chlorophyllBreakGeoJson = useMemo(
+    () =>
+      chlorophyllBreakMapData?.data ?? {
+        type: "FeatureCollection" as const,
+        features: [],
+      },
+    [chlorophyllBreakMapData],
   );
 
   useEffect(() => {
@@ -190,11 +237,11 @@ export default function OffshoreMap({
         container: mapContainerRef.current,
         style: BASEMAP_STYLE,
         center: DEFAULT_CENTER,
-      zoom: 6.2,
-      minZoom: 4,
-      maxZoom: 12,
-      attributionControl: {},
-    });
+        zoom: 6.2,
+        minZoom: 4,
+        maxZoom: 12,
+        attributionControl: {},
+      });
 
       map.addControl(new maplibre.NavigationControl(), "top-right");
       map.on("load", () => {
@@ -335,6 +382,76 @@ export default function OffshoreMap({
             "line-opacity": 0.78,
           },
         });
+        map.addSource("chlorophyll-breaks", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [],
+          },
+        });
+        map.addLayer({
+          id: "chlorophyll-breaks-fill",
+          type: "fill",
+          source: "chlorophyll-breaks",
+          layout: {
+            visibility: "none",
+          },
+          paint: {
+            "fill-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_mg_m3_per_nm"],
+              0,
+              "rgba(0,0,0,0)",
+              0.006,
+              "rgba(83,255,182,0.14)",
+              0.012,
+              "rgba(112,246,154,0.28)",
+              0.02,
+              "rgba(188,255,76,0.45)",
+              0.03,
+              "rgba(244,255,158,0.68)",
+            ],
+            "fill-opacity": 0.74,
+          },
+        });
+        map.addLayer({
+          id: "chlorophyll-breaks-line",
+          type: "line",
+          source: "chlorophyll-breaks",
+          layout: {
+            visibility: "none",
+          },
+          paint: {
+            "line-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_mg_m3_per_nm"],
+              0,
+              "rgba(0,0,0,0)",
+              0.01,
+              "rgba(123,255,187,0.24)",
+              0.02,
+              "rgba(198,255,95,0.58)",
+              0.03,
+              "rgba(246,255,201,0.9)",
+            ],
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["get", "break_intensity_mg_m3_per_nm"],
+              0,
+              0,
+              0.01,
+              0.5,
+              0.02,
+              1.0,
+              0.03,
+              1.6,
+            ],
+            "line-opacity": 0.84,
+          },
+        });
 
         map.addSource("ranked-zones", {
           type: "geojson",
@@ -357,9 +474,24 @@ export default function OffshoreMap({
               100,
               13,
             ],
-            "circle-color": "#f8fbff",
-            "circle-stroke-color": "#66f0c9",
-            "circle-stroke-width": 2,
+            "circle-color": [
+              "case",
+              ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+              "#fff4d8",
+              "#f8fbff",
+            ],
+            "circle-stroke-color": [
+              "case",
+              ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+              "#ffb55f",
+              "#66f0c9",
+            ],
+            "circle-stroke-width": [
+              "case",
+              ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+              3.2,
+              2,
+            ],
             "circle-opacity": 0.95,
           },
         });
@@ -405,6 +537,25 @@ export default function OffshoreMap({
           popupRef.current?.remove();
         });
 
+        map.on("mousemove", "chlorophyll-breaks-fill", (event: any) => {
+          const feature = event.features?.[0] as ChlorophyllBreakMapFeature | undefined;
+          if (!feature || !popupRef.current) {
+            return;
+          }
+          map.getCanvas().style.cursor = "crosshair";
+          popupRef.current
+            .setLngLat(event.lngLat)
+            .setHTML(
+              `<strong>Chl ${feature.properties.chlorophyll_mg_m3.toFixed(2)} mg/m3</strong><br/>Break ${feature.properties.break_intensity_mg_m3_per_nm.toFixed(3)} mg/m3/nm`,
+            )
+            .addTo(map);
+        });
+
+        map.on("mouseleave", "chlorophyll-breaks-fill", () => {
+          map.getCanvas().style.cursor = "";
+          popupRef.current?.remove();
+        });
+
         map.on("mousemove", "ranked-zones-circles", (event: any) => {
           const feature = event.features?.[0] as
             | {
@@ -432,6 +583,25 @@ export default function OffshoreMap({
         map.on("mouseleave", "ranked-zones-circles", () => {
           map.getCanvas().style.cursor = "";
           popupRef.current?.remove();
+        });
+
+        map.on("click", "ranked-zones-circles", (event: any) => {
+          const feature = event.features?.[0] as
+            | {
+                properties: { id: string; name: string; score: number; summary: string };
+                geometry: { coordinates: [number, number] };
+              }
+            | undefined;
+          if (!feature || !popupRef.current) {
+            return;
+          }
+          onZoneSelect(feature.properties.id);
+          popupRef.current
+            .setLngLat(feature.geometry.coordinates)
+            .setHTML(
+              `<strong>${feature.properties.name}</strong><br/>Score ${feature.properties.score.toFixed(1)}<br/>${feature.properties.summary}`,
+            )
+            .addTo(map);
         });
       });
 
@@ -469,6 +639,17 @@ export default function OffshoreMap({
       console.warn("SST features were loaded but the sst-grid source is missing.");
     }
   }, [mapReady, sstGeoJson, sstMapData]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) {
+      return;
+    }
+    const source = map.getSource("chlorophyll-breaks");
+    if (source) {
+      source.setData(chlorophyllBreakGeoJson);
+    }
+  }, [chlorophyllBreakGeoJson, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -559,7 +740,21 @@ export default function OffshoreMap({
         showSstSurface && showTempBreaks ? "visible" : "none",
       );
     }
-  }, [showSstGrid, showSstSurface, showTempBreaks]);
+    if (map.getLayer("chlorophyll-breaks-fill")) {
+      map.setLayoutProperty(
+        "chlorophyll-breaks-fill",
+        "visibility",
+        showChlorophyllBreaks ? "visible" : "none",
+      );
+    }
+    if (map.getLayer("chlorophyll-breaks-line")) {
+      map.setLayoutProperty(
+        "chlorophyll-breaks-line",
+        "visibility",
+        showChlorophyllBreaks ? "visible" : "none",
+      );
+    }
+  }, [showChlorophyllBreaks, showSstGrid, showSstSurface, showTempBreaks]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -572,6 +767,31 @@ export default function OffshoreMap({
       showNauticalOverlay ? "visible" : "none",
     );
   }, [showNauticalOverlay]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("ranked-zones-circles")) {
+      return;
+    }
+    map.setPaintProperty("ranked-zones-circles", "circle-color", [
+      "case",
+      ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+      "#fff4d8",
+      "#f8fbff",
+    ]);
+    map.setPaintProperty("ranked-zones-circles", "circle-stroke-color", [
+      "case",
+      ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+      "#ffb55f",
+      "#66f0c9",
+    ]);
+    map.setPaintProperty("ranked-zones-circles", "circle-stroke-width", [
+      "case",
+      ["==", ["get", "id"], ["literal", selectedZoneId ?? ""]],
+      3.2,
+      2,
+    ]);
+  }, [selectedZoneId]);
 
   const overlayUnavailable =
     Boolean(sstMapError) || Boolean(mapRuntimeError) || sstMapData?.metadata.source === "unavailable";
@@ -628,6 +848,14 @@ export default function OffshoreMap({
             />
           </label>
           <label className={styles.opacityControl}>
+            <span>Show Chlorophyll Breaks</span>
+            <input
+              checked={showChlorophyllBreaks}
+              onChange={(event) => setShowChlorophyllBreaks(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+          <label className={styles.opacityControl}>
             <span>Overlay opacity</span>
             <input
               disabled={!showSstSurface}
@@ -664,6 +892,13 @@ export default function OffshoreMap({
               Temperature break intensity
             </div>
             <div className={styles.legendItem}>
+              <span
+                className={styles.legendSwatch}
+                style={{ background: "linear-gradient(135deg, rgba(83,255,182,0.55), rgba(244,255,158,0.9))" }}
+              />
+              Chlorophyll break intensity
+            </div>
+            <div className={styles.legendItem}>
               <span className={styles.legendSwatch} style={{ background: "rgba(255, 255, 255, 0.68)" }} />
               Nautical seamark raster
             </div>
@@ -683,14 +918,22 @@ export default function OffshoreMap({
               {sstMapData.metadata.break_intensity_range[1].toFixed(3)} F/nm.
             </p>
           )}
+          {chlorophyllBreakMapData?.metadata.break_intensity_range_mg_m3_per_nm && (
+            <p className={styles.controlHint}>
+              Chlorophyll break range {chlorophyllBreakMapData.metadata.break_intensity_range_mg_m3_per_nm[0].toFixed(3)}-
+              {chlorophyllBreakMapData.metadata.break_intensity_range_mg_m3_per_nm[1].toFixed(3)} mg/m3/nm.
+            </p>
+          )}
         </div>
       </div>
 
       <div className={styles.mapFeedback}>
         {isZonesLoading && <p className={styles.loadingBanner}>Refreshing zone rankings...</p>}
         {isSstMapLoading && <p className={styles.loadingBanner}>Refreshing SST overlay...</p>}
+        {isChlorophyllBreakMapLoading && <p className={styles.loadingBanner}>Refreshing chlorophyll break overlay...</p>}
         {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
         {mapRuntimeError && <p className={styles.errorBanner}>{mapRuntimeError}</p>}
+        {chlorophyllBreakMapError && <p className={styles.errorBanner}>{chlorophyllBreakMapError}</p>}
         {!overlayUnavailable && !isSstMapLoading && !hasOverlayCells && (
           <p className={styles.loadingBanner}>No SST overlay cells were returned for the current map request.</p>
         )}

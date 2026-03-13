@@ -66,6 +66,22 @@ class WeightedScoreBreakdown(BaseModel):
     weather_fishability: float
 
 
+class ScoreExplanationFactor(BaseModel):
+    factor: str
+    label: str
+    raw_value: str
+    score: float
+    weighted_contribution: float
+    reason: str
+
+
+class ZoneScoreExplanation(BaseModel):
+    headline: str
+    summary: str
+    top_reasons: list[str]
+    factors: list[ScoreExplanationFactor]
+
+
 class SpeciesConfig(BaseModel):
     species: str
     label: str
@@ -100,6 +116,7 @@ class RankedZone(BaseModel):
     score_breakdown: ScoreBreakdown
     score_weights: WeightedScoreConfig
     weighted_score_breakdown: WeightedScoreBreakdown
+    score_explanation: ZoneScoreExplanation
     scored_for_species: str
     scored_for_date: date
 
@@ -156,3 +173,79 @@ class SstMapMetadata(BaseModel):
 class SstMapResponse(BaseModel):
     metadata: SstMapMetadata
     data: SstMapFeatureCollection
+
+
+class ChlorophyllBreakMapPolygonGeometry(BaseModel):
+    type: Literal["Polygon"] = "Polygon"
+    coordinates: list[list[list[float]]]
+
+
+class ChlorophyllBreakMapFeatureProperties(BaseModel):
+    chlorophyll_mg_m3: float
+    break_intensity_mg_m3_per_nm: float
+
+
+class ChlorophyllBreakMapFeature(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: ChlorophyllBreakMapPolygonGeometry
+    properties: ChlorophyllBreakMapFeatureProperties
+
+
+class ChlorophyllBreakMapFeatureCollection(BaseModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[ChlorophyllBreakMapFeature]
+
+
+class ChlorophyllBreakMapMetadata(BaseModel):
+    date: date
+    bbox: list[float]
+    source: str
+    dataset_id: str | None = None
+    units: Literal["mg_m3"] = "mg_m3"
+    point_count: int
+    cell_count: int
+    chlorophyll_range_mg_m3: list[float] | None = None
+    break_intensity_range_mg_m3_per_nm: list[float] | None = None
+    grid_resolution: list[int] | None = None
+
+
+class ChlorophyllBreakMapResponse(BaseModel):
+    metadata: ChlorophyllBreakMapMetadata
+    data: ChlorophyllBreakMapFeatureCollection
+
+
+class TripOutcomeRecord(BaseModel):
+    id: str
+    date: date
+    target_species: str
+    zone_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    catch_success: float = Field(ge=0.0, le=1.0)
+    catch_count: int = 0
+    vessel: str
+    notes: str = ""
+
+
+class HistoricalZoneScoreSnapshot(BaseModel):
+    date: date
+    species: str
+    zone_id: str
+    score: float
+    score_breakdown: ScoreBreakdown
+    weighted_score_breakdown: WeightedScoreBreakdown
+
+
+class OutcomeCalibrationGap(BaseModel):
+    zone_id: str
+    species: str
+    predicted_score: float
+    actual_success: float
+    score_error: float
+
+
+class OutcomeBacktestReport(BaseModel):
+    outcome_count: int
+    compared_count: int
+    mean_absolute_error: float | None = None
+    largest_gaps: list[OutcomeCalibrationGap]

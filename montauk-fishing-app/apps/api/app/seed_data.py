@@ -185,3 +185,30 @@ TRIP_LOGS = [
         "notes": "Sparse early marks improved on tide change near contour transitions.",
     },
 ]
+
+TRIP_OUTCOMES = [
+    {
+        "id": "outcome-001",
+        "date": "2025-09-14",
+        "target_species": "yellowfin",
+        "zone_id": "hudson-edge-east",
+        "latitude": 40.94,
+        "longitude": -71.14,
+        "catch_success": 0.92,
+        "catch_count": 6,
+        "vessel": "North Star",
+        "notes": "Strong life on the warm side of a clean edge. Good benchmark trip for yellowfin edge tuning.",
+    },
+    {
+        "id": "outcome-002",
+        "date": "2025-08-29",
+        "target_species": "mahi",
+        "zone_id": "cartwright-corner",
+        "latitude": 40.88,
+        "longitude": -70.72,
+        "catch_success": 0.81,
+        "catch_count": 11,
+        "vessel": "Second Drift",
+        "notes": "Weedline and floating life converted well once current stabilized.",
+    },
+]

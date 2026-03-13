@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import styles from "./page.module.css";
 
 const OffshoreMap = dynamic(() => import("./OffshoreMap"), {
@@ -19,9 +19,29 @@ type Zone = {
   score: number;
   sea_surface_temp_f: number;
   temp_gradient_f_per_nm: number;
+  nearest_strong_break_distance_nm?: number | null;
   structure_distance_nm: number;
   chlorophyll_mg_m3: number;
+  nearest_strong_chl_break_distance_nm?: number | null;
   current_speed_kts: number;
+  current_break_index: number;
+  weather_risk_index: number;
+  score_breakdown: Record<string, number>;
+  score_weights: Record<string, number>;
+  weighted_score_breakdown: Record<string, number>;
+  score_explanation: {
+    headline: string;
+    summary: string;
+    top_reasons: string[];
+    factors: Array<{
+      factor: string;
+      label: string;
+      raw_value: string;
+      score: number;
+      weighted_contribution: number;
+      reason: string;
+    }>;
+  };
   depth_ft: number;
   summary: string;
 };
@@ -42,6 +62,19 @@ type SpeciesConfig = {
   season_window: string;
   preferred_temp_f: number[];
   notes: string;
+  temp_break_config?: {
+    strong_break_threshold_f_per_nm: number;
+    full_score_distance_nm: number;
+    zero_score_distance_nm: number;
+    factor_weight: number;
+  } | null;
+  chlorophyll_break_config?: {
+    strong_break_threshold_mg_m3_per_nm: number;
+    full_score_distance_nm: number;
+    zero_score_distance_nm: number;
+    factor_weight: number;
+  } | null;
+  weights?: Record<string, number>;
 };
 
 type HealthResponse = {
@@ -78,6 +111,36 @@ type SstMapResponse = {
   data: {
     type: "FeatureCollection";
     features: SstMapFeature[];
+  };
+};
+
+type ChlorophyllBreakMapFeature = {
+  type: "Feature";
+  geometry: {
+    type: "Polygon";
+    coordinates: [Array<[number, number]>];
+  };
+  properties: {
+    chlorophyll_mg_m3: number;
+    break_intensity_mg_m3_per_nm: number;
+  };
+};
+
+type ChlorophyllBreakMapResponse = {
+  metadata: {
+    date: string;
+    bbox: [number, number, number, number];
+    source: string;
+    units: "mg_m3";
+    point_count: number;
+    cell_count: number;
+    chlorophyll_range_mg_m3?: [number, number] | null;
+    break_intensity_range_mg_m3_per_nm?: [number, number] | null;
+    grid_resolution?: [number, number] | null;
+  };
+  data: {
+    type: "FeatureCollection";
+    features: ChlorophyllBreakMapFeature[];
   };
 };
 
@@ -168,6 +231,25 @@ function buildEmptySstMapResponse(apiDate: string): SstMapResponse {
   };
 }
 
+function buildEmptyChlorophyllBreakMapResponse(apiDate: string): ChlorophyllBreakMapResponse {
+  return {
+    metadata: {
+      date: apiDate,
+      bbox: [-72.4, 39.8, -69.8, 41.4],
+      source: "unavailable",
+      units: "mg_m3",
+      point_count: 0,
+      cell_count: 0,
+      chlorophyll_range_mg_m3: null,
+      break_intensity_range_mg_m3_per_nm: null,
+    },
+    data: {
+      type: "FeatureCollection",
+      features: [],
+    },
+  };
+}
+
 async function fetchApi<T>(
   path: string,
   options?: {
@@ -220,11 +302,15 @@ export default function HomeDashboard() {
   const [speciesConfigs, setSpeciesConfigs] = useState<SpeciesConfig[]>([]);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [sstMapData, setSstMapData] = useState<SstMapResponse | null>(null);
+  const [chlorophyllBreakMapData, setChlorophyllBreakMapData] = useState<ChlorophyllBreakMapResponse | null>(null);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
 
   const [isZonesLoading, setIsZonesLoading] = useState(true);
   const [isSstMapLoading, setIsSstMapLoading] = useState(true);
+  const [isChlBreakMapLoading, setIsChlBreakMapLoading] = useState(true);
   const [zonesError, setZonesError] = useState<string | null>(null);
   const [sstMapError, setSstMapError] = useState<string | null>(null);
+  const [chlorophyllBreakMapError, setChlorophyllBreakMapError] = useState<string | null>(null);
   const [supportingError, setSupportingError] = useState<string | null>(null);
 
   const apiDate = toApiDate(selectedDate);
@@ -361,7 +447,56 @@ export default function HomeDashboard() {
     };
   }, [apiDate]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsChlBreakMapLoading(true);
+    setChlorophyllBreakMapError(null);
+
+    fetchApi<ChlorophyllBreakMapResponse>(
+      `/map/chlorophyll-breaks?date=${apiDate}&bbox=${encodeURIComponent(DEFAULT_MAP_BBOX)}`,
+      {
+        signal: controller.signal,
+        timeoutMs: 5000,
+      },
+    )
+      .then((response) => {
+        setChlorophyllBreakMapData(response);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Chlorophyll break overlay unavailable because the API at ${API_BASE_URL} could not be reached.`;
+        setChlorophyllBreakMapData(buildEmptyChlorophyllBreakMapResponse(apiDate));
+        setChlorophyllBreakMapError(message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsChlBreakMapLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiDate]);
+
   const topZone = zones[0] ?? null;
+  const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? topZone;
+
+  useEffect(() => {
+    if (zones.length === 0) {
+      setSelectedZoneId(null);
+      return;
+    }
+    if (selectedZoneId && zones.some((zone) => zone.id === selectedZoneId)) {
+      return;
+    }
+    setSelectedZoneId(zones[0]?.id ?? null);
+  }, [selectedZoneId, zones]);
 
   function handleSpeciesChange(event: ChangeEvent<HTMLSelectElement>) {
     setSelectedSpecies(event.target.value);
@@ -398,12 +533,25 @@ export default function HomeDashboard() {
     setDateError(null);
   }
 
+  function handleZoneCardKeyDown(event: KeyboardEvent<HTMLElement>, zoneId: string) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    setSelectedZoneId(zoneId);
+  }
+
   return (
     <main className={styles.shell}>
       <section className={styles.mapPane}>
         <OffshoreMap
+          chlorophyllBreakMapData={chlorophyllBreakMapData}
+          chlorophyllBreakMapError={chlorophyllBreakMapError}
+          isChlorophyllBreakMapLoading={isChlBreakMapLoading}
           isSstMapLoading={isSstMapLoading}
           isZonesLoading={isZonesLoading}
+          onZoneSelect={setSelectedZoneId}
+          selectedZoneId={selectedZoneId}
           sstMapData={sstMapData}
           sstMapError={sstMapError}
           zones={zones}
@@ -448,10 +596,12 @@ export default function HomeDashboard() {
           </div>
           {isZonesLoading && <p className={styles.loadingBanner}>Refreshing zone scores for {selectedSpecies}...</p>}
           {isSstMapLoading && <p className={styles.loadingBanner}>Refreshing the SST map overlay...</p>}
+          {isChlBreakMapLoading && <p className={styles.loadingBanner}>Refreshing chlorophyll edge overlay...</p>}
           {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
           {sstMapError && <p className={styles.errorBanner}>{sstMapError}</p>}
+          {chlorophyllBreakMapError && <p className={styles.errorBanner}>{chlorophyllBreakMapError}</p>}
           {supportingError && <p className={styles.errorBanner}>{supportingError}</p>}
-          {(zonesError || sstMapError || supportingError) && (
+          {(zonesError || sstMapError || chlorophyllBreakMapError || supportingError) && (
             <p className={styles.controlHint}>Current API base URL: {API_BASE_URL}</p>
           )}
         </section>
@@ -496,10 +646,53 @@ export default function HomeDashboard() {
         </section>
 
         <section className={styles.panelSection}>
+          <h2 className={styles.panelHeading}>Selected Zone Why It Ranks</h2>
+          {selectedZone ? (
+            <div className={styles.explanationCard}>
+              <h3 className={styles.featuredTitle}>{selectedZone.name}</h3>
+              <p className={styles.listText}>{selectedZone.score_explanation.headline}</p>
+              <p className={styles.controlHint}>{selectedZone.score_explanation.summary}</p>
+              <div className={styles.list}>
+                {selectedZone.score_explanation.top_reasons.map((reason) => (
+                  <div className={styles.listItem} key={reason}>
+                    <p className={styles.listText}>{reason}</p>
+                  </div>
+                ))}
+              </div>
+              <div className={styles.list}>
+                {selectedZone.score_explanation.factors.map((factor) => (
+                  <article className={styles.listItem} key={factor.factor}>
+                    <div className={styles.listTitleRow}>
+                      <h4 className={styles.listTitle}>{factor.label}</h4>
+                      <span className={styles.listTag}>+{factor.weighted_contribution.toFixed(1)}</span>
+                    </div>
+                    <p className={styles.listMeta}>
+                      Raw {factor.raw_value} | Factor score {factor.score.toFixed(1)}
+                    </p>
+                    <p className={styles.listText}>{factor.reason}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className={styles.featuredEmpty}>
+              <p className={styles.listText}>Click a zone on the map or in the list to inspect exactly why it ranks well.</p>
+            </div>
+          )}
+        </section>
+
+        <section className={styles.panelSection}>
           <h2 className={styles.panelHeading}>Top Zones</h2>
           <div className={styles.list}>
             {zones.map((zone) => (
-              <article className={styles.listItem} key={`${zone.id}-panel-${zone.scored_for_date}`}>
+              <article
+                className={`${styles.listItem} ${selectedZoneId === zone.id ? styles.selectedListItem : ""}`}
+                key={`${zone.id}-panel-${zone.scored_for_date}`}
+                onClick={() => setSelectedZoneId(zone.id)}
+                onKeyDown={(event) => handleZoneCardKeyDown(event, zone.id)}
+                role="button"
+                tabIndex={0}
+              >
                 <div className={styles.listTitleRow}>
                   <h3 className={styles.listTitle}>{zone.name}</h3>
                   <span className={styles.listTag}>Score {zone.score}</span>
@@ -526,6 +719,18 @@ export default function HomeDashboard() {
                   Preferred temp {species.preferred_temp_f[0]}-{species.preferred_temp_f[1]} F
                 </p>
                 <p className={styles.listText}>{species.notes}</p>
+                {species.temp_break_config && (
+                  <p className={styles.controlHint}>
+                    SST break: full within {species.temp_break_config.full_score_distance_nm} nm, fades to zero by{" "}
+                    {species.temp_break_config.zero_score_distance_nm} nm.
+                  </p>
+                )}
+                {species.chlorophyll_break_config && (
+                  <p className={styles.controlHint}>
+                    Chlorophyll break: full within {species.chlorophyll_break_config.full_score_distance_nm} nm, fades to zero by{" "}
+                    {species.chlorophyll_break_config.zero_score_distance_nm} nm.
+                  </p>
+                )}
               </article>
             ))}
           </div>

@@ -3,8 +3,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.date_params import parse_api_date
-from app.api.deps import LiveSstProviderDep, SstMapServiceDep
-from app.schemas import SstMapResponse
+from app.api.deps import ChlorophyllBreakMapServiceDep, LiveSstProviderDep, SstMapServiceDep
+from app.schemas import ChlorophyllBreakMapResponse, SstMapResponse
 
 router = APIRouter(prefix="/map", tags=["map"])
 logger = logging.getLogger(__name__)
@@ -53,6 +53,30 @@ def get_sst_map(
         },
     )
     return sst_map_service.get_sst_map(
+        trip_date=trip_date,
+        bbox=parsed_bbox,
+    )
+
+
+@router.get("/chlorophyll-breaks", response_model=ChlorophyllBreakMapResponse)
+def get_chlorophyll_break_map(
+    chlorophyll_break_map_service: ChlorophyllBreakMapServiceDep,
+    date_value: str = Query(
+        alias="date",
+        description="Trip date. Preferred format: YYYY-MM-DD. MM-DD-YYYY and MM/DD/YYYY are also accepted.",
+    ),
+    bbox: str = Query(..., description="minLng,minLat,maxLng,maxLat"),
+) -> ChlorophyllBreakMapResponse:
+    trip_date = parse_api_date(date_value)
+    parsed_bbox = _parse_bbox(bbox)
+    logger.info(
+        "Handling /map/chlorophyll-breaks request",
+        extra={
+            "trip_date": trip_date.isoformat(),
+            "bbox": list(parsed_bbox),
+        },
+    )
+    return chlorophyll_break_map_service.get_chlorophyll_break_map(
         trip_date=trip_date,
         bbox=parsed_bbox,
     )

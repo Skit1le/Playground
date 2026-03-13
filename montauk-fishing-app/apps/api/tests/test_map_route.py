@@ -1,8 +1,15 @@
 import unittest
 from datetime import date
 
-from app.api.routes.map import _parse_bbox, get_live_sst_debug, get_sst_map
-from app.schemas import SstMapFeatureCollection, SstMapMetadata, SstMapResponse
+from app.api.routes.map import _parse_bbox, get_chlorophyll_break_map, get_live_sst_debug, get_sst_map
+from app.schemas import (
+    ChlorophyllBreakMapFeatureCollection,
+    ChlorophyllBreakMapMetadata,
+    ChlorophyllBreakMapResponse,
+    SstMapFeatureCollection,
+    SstMapMetadata,
+    SstMapResponse,
+)
 
 
 class FakeSstMapService:
@@ -30,6 +37,21 @@ class FakeLiveSstProvider:
         max_lon: float | None = None,
     ) -> dict[str, object | None]:
         self.calls.append((trip_date, min_lat or 0.0, max_lat or 0.0, min_lon or 0.0, max_lon or 0.0))
+        return self.response
+
+
+class FakeChlorophyllBreakMapService:
+    def __init__(self, response: ChlorophyllBreakMapResponse):
+        self.response = response
+        self.calls: list[tuple[date, tuple[float, float, float, float]]] = []
+
+    def get_chlorophyll_break_map(
+        self,
+        *,
+        trip_date: date,
+        bbox: tuple[float, float, float, float],
+    ) -> ChlorophyllBreakMapResponse:
+        self.calls.append((trip_date, bbox))
         return self.response
 
 
@@ -105,6 +127,58 @@ class MapRouteTestCase(unittest.TestCase):
 
         response = get_sst_map(
             sst_map_service=fake_service,
+            date_value="06/18/2026",
+            bbox="-72.4,39.8,-69.8,41.4",
+        )
+
+        self.assertEqual(response.metadata.source, "unavailable")
+        self.assertEqual(response.data.features, [])
+
+    def test_get_chlorophyll_break_map_delegates_to_service(self) -> None:
+        fake_service = FakeChlorophyllBreakMapService(
+            response=ChlorophyllBreakMapResponse(
+                metadata=ChlorophyllBreakMapMetadata(
+                    date=date(2026, 6, 18),
+                    bbox=[-72.4, 39.8, -69.8, 41.4],
+                    source="processed",
+                    point_count=18,
+                    cell_count=144,
+                    chlorophyll_range_mg_m3=[0.12, 0.38],
+                    break_intensity_range_mg_m3_per_nm=[0.0, 0.028],
+                    grid_resolution=[18, 8],
+                ),
+                data=ChlorophyllBreakMapFeatureCollection(features=[]),
+            )
+        )
+
+        response = get_chlorophyll_break_map(
+            chlorophyll_break_map_service=fake_service,
+            date_value="2026-06-18",
+            bbox="-72.4,39.8,-69.8,41.4",
+        )
+
+        self.assertEqual(response.metadata.source, "processed")
+        self.assertEqual(fake_service.calls, [(date(2026, 6, 18), (-72.4, 39.8, -69.8, 41.4))])
+
+    def test_get_chlorophyll_break_map_can_return_empty_fallback_payload(self) -> None:
+        fake_service = FakeChlorophyllBreakMapService(
+            response=ChlorophyllBreakMapResponse(
+                metadata=ChlorophyllBreakMapMetadata(
+                    date=date(2026, 6, 18),
+                    bbox=[-72.4, 39.8, -69.8, 41.4],
+                    source="unavailable",
+                    point_count=0,
+                    cell_count=0,
+                    chlorophyll_range_mg_m3=None,
+                    break_intensity_range_mg_m3_per_nm=None,
+                    grid_resolution=None,
+                ),
+                data=ChlorophyllBreakMapFeatureCollection(features=[]),
+            )
+        )
+
+        response = get_chlorophyll_break_map(
+            chlorophyll_break_map_service=fake_service,
             date_value="06/18/2026",
             bbox="-72.4,39.8,-69.8,41.4",
         )

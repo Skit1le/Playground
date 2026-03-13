@@ -4,7 +4,15 @@ from datetime import date
 from fastapi import HTTPException
 
 from app.api.routes.zones import list_zones
-from app.schemas import RankedZone, ScoreBreakdown, WeightedScoreBreakdown, WeightedScoreConfig, ZoneCenter
+from app.schemas import (
+    RankedZone,
+    ScoreBreakdown,
+    ScoreExplanationFactor,
+    WeightedScoreBreakdown,
+    WeightedScoreConfig,
+    ZoneCenter,
+    ZoneScoreExplanation,
+)
 from app.services.zones import SpeciesConfigNotFoundError
 
 
@@ -35,6 +43,7 @@ def make_ranked_zone() -> RankedZone:
         nearest_strong_break_distance_nm=3.4,
         structure_distance_nm=1.2,
         chlorophyll_mg_m3=0.28,
+        nearest_strong_chl_break_distance_nm=4.1,
         current_speed_kts=1.6,
         current_break_index=0.88,
         weather_risk_index=0.14,
@@ -71,6 +80,24 @@ def make_ranked_zone() -> RankedZone:
             chlorophyll_break_proximity=2.8,
             current_suitability=10.7,
             weather_fishability=14.1,
+        ),
+        score_explanation=ZoneScoreExplanation(
+            headline="Prime Edge ranks well because the water setup stacks multiple favorable signals.",
+            summary="SST, color, and structure all line up for bluefin.",
+            top_reasons=[
+                "Species temperature fit: Water temperature lines up with the preferred bluefin range.",
+                "SST break proximity: Closer zones sit nearer to meaningful temperature breaks where bait and pelagics often stack.",
+            ],
+            factors=[
+                ScoreExplanationFactor(
+                    factor="temp_suitability",
+                    label="Species temperature fit",
+                    raw_value="65.0 F",
+                    score=100.0,
+                    weighted_contribution=20.5,
+                    reason="Water temperature lines up with the preferred bluefin range.",
+                )
+            ],
         ),
         scored_for_species="bluefin",
         scored_for_date=date(2026, 6, 18),
