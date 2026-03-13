@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from time import sleep
 
-from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllObservation
+from app.chlorophyll_provider import ChlorophyllDataUnavailableError, ChlorophyllObservation, ChlorophyllPoint
 from app.current_provider import CurrentDataUnavailableError, CurrentObservation
 from app.db_models import SpeciesScoringConfigModel, ZoneModel
 from app.environmental_inputs import (
@@ -115,9 +115,18 @@ class FakeSstProvider:
 
 
 class FakeChlorophyllProvider:
-    def __init__(self, observation: ChlorophyllObservation | Exception):
+    def __init__(
+        self,
+        observation: ChlorophyllObservation | Exception,
+        points: tuple[ChlorophyllPoint, ...] | None = None,
+    ):
         self.observation = observation
         self.calls: list[tuple[str, date]] = []
+        self.min_lat = 39.8
+        self.max_lat = 41.4
+        self.min_lon = -72.4
+        self.max_lon = -69.8
+        self.points = points or ()
 
     def get_zone_chlorophyll(
         self,
@@ -130,6 +139,17 @@ class FakeChlorophyllProvider:
         if isinstance(self.observation, Exception):
             raise self.observation
         return self.observation
+
+    def get_chlorophyll_points(
+        self,
+        trip_date: date,
+        *,
+        min_lat: float | None = None,
+        max_lat: float | None = None,
+        min_lon: float | None = None,
+        max_lon: float | None = None,
+    ) -> tuple[ChlorophyllPoint, ...]:
+        return self.points
 
 
 class FakeCurrentProvider:
@@ -278,6 +298,7 @@ class ZonesServiceTestCase(unittest.TestCase):
                 "nearest_strong_break_distance_nm",
                 "structure_distance_nm",
                 "chlorophyll_mg_m3",
+                "nearest_strong_chl_break_distance_nm",
                 "current_speed_kts",
                 "current_break_index",
                 "weather_risk_index",
@@ -292,8 +313,11 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertEqual(ranked_zones[0].scored_for_species, "bluefin")
         self.assertEqual(ranked_zones[0].scored_for_date, date(2026, 6, 18))
         self.assertIn("temp_break_proximity", ranked_zones[0].score_breakdown.model_dump())
+        self.assertIn("chlorophyll_break_proximity", ranked_zones[0].score_breakdown.model_dump())
         self.assertIn("temp_break_proximity", ranked_zones[0].score_weights.model_dump())
+        self.assertIn("chlorophyll_break_proximity", ranked_zones[0].score_weights.model_dump())
         self.assertIn("temp_break_proximity", ranked_zones[0].weighted_score_breakdown.model_dump())
+        self.assertIn("chlorophyll_break_proximity", ranked_zones[0].weighted_score_breakdown.model_dump())
 
     def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
         service = ZonesService(
@@ -307,6 +331,7 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(
             ranked_zone.score,
             round(sum(ranked_zone.weighted_score_breakdown.model_dump().values()), 1),
+            places=0,
         )
         self.assertAlmostEqual(sum(ranked_zone.score_weights.model_dump().values()), 1.0, places=3)
 
@@ -433,6 +458,118 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         self.assertIsNotNone(ranked_zone.nearest_strong_break_distance_nm)
         self.assertGreaterEqual(ranked_zone.score_breakdown.temp_break_proximity, 0.0)
+
+    def test_list_ranked_zones_rewards_proximity_to_strong_chlorophyll_breaks(self) -> None:
+        chlorophyll_points = (
+            ChlorophyllPoint(latitude=40.85, longitude=-72.1, chlorophyll_mg_m3=0.12),
+            ChlorophyllPoint(latitude=40.95, longitude=-72.1, chlorophyll_mg_m3=0.12),
+            ChlorophyllPoint(latitude=41.05, longitude=-72.1, chlorophyll_mg_m3=0.13),
+            ChlorophyllPoint(latitude=40.85, longitude=-71.95, chlorophyll_mg_m3=0.14),
+            ChlorophyllPoint(latitude=40.95, longitude=-71.95, chlorophyll_mg_m3=0.14),
+            ChlorophyllPoint(latitude=41.05, longitude=-71.95, chlorophyll_mg_m3=0.15),
+            ChlorophyllPoint(latitude=40.85, longitude=-71.8, chlorophyll_mg_m3=0.36),
+            ChlorophyllPoint(latitude=40.95, longitude=-71.8, chlorophyll_mg_m3=0.35),
+            ChlorophyllPoint(latitude=41.05, longitude=-71.8, chlorophyll_mg_m3=0.34),
+            ChlorophyllPoint(latitude=40.85, longitude=-71.65, chlorophyll_mg_m3=0.38),
+            ChlorophyllPoint(latitude=40.95, longitude=-71.65, chlorophyll_mg_m3=0.37),
+            ChlorophyllPoint(latitude=41.05, longitude=-71.65, chlorophyll_mg_m3=0.36),
+        )
+        environmental_input_provider = ZoneEnvironmentalInputService(
+            chlorophyll_source=ChlorophyllBackedSource(
+                FakeChlorophyllProvider(
+                    ChlorophyllObservation(chlorophyll_mg_m3=0.28),
+                    points=chlorophyll_points,
+                )
+            ),
+            signal_store=MockZoneEnvironmentalSignalStore(
+                records={
+                    "chl-close": {
+                        "sea_surface_temp_f": 66.0,
+                        "temp_gradient_f_per_nm": 1.6,
+                        "structure_distance_nm": 2.0,
+                        "chlorophyll_mg_m3": 0.28,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.18,
+                    },
+                    "chl-far": {
+                        "sea_surface_temp_f": 66.0,
+                        "temp_gradient_f_per_nm": 1.6,
+                        "structure_distance_nm": 2.0,
+                        "chlorophyll_mg_m3": 0.28,
+                        "current_speed_kts": 1.4,
+                        "current_break_index": 0.73,
+                        "weather_risk_index": 0.18,
+                    },
+                }
+            ),
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository(
+                [
+                    make_zone(zone_id="chl-close", name="Chl Close", distance_nm=58, center_lng=-71.87),
+                    make_zone(zone_id="chl-far", name="Chl Far", distance_nm=58, center_lng=-71.3),
+                ]
+            ),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=environmental_input_provider,
+            chlorophyll_break_target_cells=360,
+            strong_chlorophyll_break_threshold_mg_m3_per_nm=0.01,
+        )
+
+        ranked_zones = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)
+        close_zone = next(zone for zone in ranked_zones if zone.id == "chl-close")
+        far_zone = next(zone for zone in ranked_zones if zone.id == "chl-far")
+
+        self.assertIsNotNone(close_zone.nearest_strong_chl_break_distance_nm)
+        self.assertIsNotNone(far_zone.nearest_strong_chl_break_distance_nm)
+        self.assertLess(
+            close_zone.nearest_strong_chl_break_distance_nm,
+            far_zone.nearest_strong_chl_break_distance_nm,
+        )
+        self.assertGreater(
+            close_zone.score_breakdown.chlorophyll_break_proximity,
+            far_zone.score_breakdown.chlorophyll_break_proximity,
+        )
+
+    def test_list_ranked_zones_exposes_chlorophyll_break_distance_with_mock_fallback(self) -> None:
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=ZoneEnvironmentalInputService(
+                chlorophyll_source=ChlorophyllBackedSource(
+                    FakeChlorophyllProvider(
+                        ChlorophyllObservation(chlorophyll_mg_m3=0.27),
+                        points=(
+                            ChlorophyllPoint(latitude=40.9, longitude=-72.05, chlorophyll_mg_m3=0.14),
+                            ChlorophyllPoint(latitude=40.9, longitude=-71.85, chlorophyll_mg_m3=0.33),
+                            ChlorophyllPoint(latitude=41.0, longitude=-72.05, chlorophyll_mg_m3=0.13),
+                            ChlorophyllPoint(latitude=41.0, longitude=-71.85, chlorophyll_mg_m3=0.34),
+                        ),
+                    )
+                ),
+                signal_store=MockZoneEnvironmentalSignalStore(
+                    records={
+                        "prime-edge": {
+                            "sea_surface_temp_f": 63.5,
+                            "temp_gradient_f_per_nm": 0.9,
+                            "structure_distance_nm": 2.6,
+                            "chlorophyll_mg_m3": 0.27,
+                            "current_speed_kts": 1.4,
+                            "current_break_index": 0.73,
+                            "weather_risk_index": 0.22,
+                        }
+                    }
+                ),
+            ),
+            chlorophyll_break_target_cells=320,
+            strong_chlorophyll_break_threshold_mg_m3_per_nm=0.01,
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertIsNotNone(ranked_zone.nearest_strong_chl_break_distance_nm)
+        self.assertGreaterEqual(ranked_zone.score_breakdown.chlorophyll_break_proximity, 0.0)
 
     def test_list_ranked_zones_uses_provider_signals_in_response_payload(self) -> None:
         service = ZonesService(

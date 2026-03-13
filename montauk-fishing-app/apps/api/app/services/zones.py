@@ -12,8 +12,18 @@ from app.environmental_inputs import (
     ZoneEnvironmentalSourceMetadata,
 )
 from app.repositories import SpeciesConfigRepository, ZoneRepository
-from app.scoring import ScoreResult, ZoneScoringEngine, build_weighted_score_config
+from app.scoring import (
+    ScoreResult,
+    ZoneScoringEngine,
+    build_chlorophyll_break_config,
+    build_temp_break_config,
+    build_weighted_score_config,
+)
 from app.schemas import RankedZone, SpeciesConfig, ZoneCenter
+from app.services.chlorophyll_edges import (
+    build_chlorophyll_cell_signals,
+    nearest_strong_chlorophyll_break_distance_nm,
+)
 from app.services.sst_map import build_sst_cell_signals, nearest_strong_break_distance_nm
 
 logger = logging.getLogger(__name__)
@@ -31,14 +41,18 @@ class ZonesService:
         scoring_engine: ZoneScoringEngine | None = None,
         environmental_input_provider: EnvironmentalInputProvider | None = None,
         sst_break_target_cells: int = 480,
+        chlorophyll_break_target_cells: int = 720,
         strong_break_threshold_f_per_nm: float = 0.05,
+        strong_chlorophyll_break_threshold_mg_m3_per_nm: float = 0.01,
     ):
         self.zone_repository = zone_repository
         self.species_config_repository = species_config_repository
         self.scoring_engine = scoring_engine or ZoneScoringEngine()
         self.environmental_input_provider = environmental_input_provider or ZoneEnvironmentalInputService()
         self.sst_break_target_cells = sst_break_target_cells
-        self.strong_break_threshold_f_per_nm = strong_break_threshold_f_per_nm
+        self.chlorophyll_break_target_cells = chlorophyll_break_target_cells
+        self.default_strong_break_threshold_f_per_nm = strong_break_threshold_f_per_nm
+        self.default_strong_chlorophyll_break_threshold_mg_m3_per_nm = strong_chlorophyll_break_threshold_mg_m3_per_nm
 
     def list_ranked_zones(self, species: str, trip_date: date, limit: int) -> list[RankedZone]:
         started_at = perf_counter()
@@ -47,7 +61,12 @@ class ZonesService:
             raise SpeciesConfigNotFoundError(f"No scoring configuration found for species '{species}'.")
 
         zones = self.zone_repository.list_for_species(species)
-        break_distances_by_zone = self._build_zone_break_distances(zones, trip_date)
+        break_distances_by_zone = self._build_zone_break_distances(zones, species, trip_date)
+        chlorophyll_break_distances_by_zone = self._build_zone_chlorophyll_break_distances(
+            zones,
+            species,
+            trip_date,
+        )
         ranked_zones = [
             self._score_zone(
                 zone=zone,
@@ -55,6 +74,7 @@ class ZonesService:
                 species=species,
                 trip_date=trip_date,
                 nearest_strong_break_distance_nm=break_distances_by_zone.get(zone.id),
+                nearest_strong_chl_break_distance_nm=chlorophyll_break_distances_by_zone.get(zone.id),
             )
             for zone in zones
         ]
@@ -85,11 +105,13 @@ class ZonesService:
         species: str,
         trip_date: date,
         nearest_strong_break_distance_nm: float | None,
+        nearest_strong_chl_break_distance_nm: float | None,
     ) -> RankedZone:
         resolved_inputs = self._resolve_zone_inputs(zone, trip_date)
         signals = replace(
             resolved_inputs.signals,
             nearest_strong_break_distance_nm=nearest_strong_break_distance_nm,
+            nearest_strong_chl_break_distance_nm=nearest_strong_chl_break_distance_nm,
         )
         score_result = self.scoring_engine.score(signals, config, trip_date)
         logger.info(
@@ -129,13 +151,15 @@ class ZonesService:
     def _build_zone_break_distances(
         self,
         zones: list[ZoneModel],
+        species: str,
         trip_date: date,
     ) -> dict[str, float | None]:
         sst_provider = _extract_sst_provider(self.environmental_input_provider)
         if sst_provider is None or not zones:
             return {zone.id: None for zone in zones}
 
-        bbox = _resolve_sst_provider_bbox(sst_provider, zones)
+        bbox = _resolve_grid_provider_bbox(sst_provider, zones)
+        temp_break_config = build_temp_break_config(species)
         try:
             points = sst_provider.get_sst_points(
                 trip_date,
@@ -157,7 +181,51 @@ class ZonesService:
                 latitude=zone.center_lat,
                 longitude=zone.center_lng,
                 cells=cells,
-                minimum_break_intensity_f_per_nm=self.strong_break_threshold_f_per_nm,
+                minimum_break_intensity_f_per_nm=(
+                    temp_break_config.strong_break_threshold_f_per_nm
+                    or self.default_strong_break_threshold_f_per_nm
+                ),
+            )
+            for zone in zones
+        }
+
+    def _build_zone_chlorophyll_break_distances(
+        self,
+        zones: list[ZoneModel],
+        species: str,
+        trip_date: date,
+    ) -> dict[str, float | None]:
+        chlorophyll_provider = _extract_chlorophyll_provider(self.environmental_input_provider)
+        if chlorophyll_provider is None or not zones:
+            return {zone.id: None for zone in zones}
+
+        bbox = _resolve_grid_provider_bbox(chlorophyll_provider, zones)
+        chlorophyll_break_config = build_chlorophyll_break_config(species)
+        try:
+            points = chlorophyll_provider.get_chlorophyll_points(
+                trip_date,
+                min_lat=bbox[1],
+                max_lat=bbox[3],
+                min_lon=bbox[0],
+                max_lon=bbox[2],
+            )
+        except Exception:
+            logger.warning(
+                "Unable to derive chlorophyll break distances for /zones request",
+                extra={"trip_date": trip_date.isoformat(), "zone_count": len(zones)},
+            )
+            return {zone.id: None for zone in zones}
+
+        cells = build_chlorophyll_cell_signals(points, bbox, self.chlorophyll_break_target_cells)
+        return {
+            zone.id: nearest_strong_chlorophyll_break_distance_nm(
+                latitude=zone.center_lat,
+                longitude=zone.center_lng,
+                cells=cells,
+                minimum_break_intensity_mg_m3_per_nm=(
+                    chlorophyll_break_config.strong_break_threshold_mg_m3_per_nm
+                    or self.default_strong_chlorophyll_break_threshold_mg_m3_per_nm
+                ),
             )
             for zone in zones
         }
@@ -177,14 +245,28 @@ def _extract_sst_provider(environmental_input_provider: EnvironmentalInputProvid
     return None
 
 
-def _resolve_sst_provider_bbox(
-    sst_provider: object,
+def _extract_chlorophyll_provider(environmental_input_provider: EnvironmentalInputProvider | object):
+    chlorophyll_source = getattr(environmental_input_provider, "chlorophyll_source", None)
+    if chlorophyll_source is None:
+        return None
+    for candidate in (
+        getattr(chlorophyll_source, "chlorophyll_provider", None),
+        getattr(getattr(chlorophyll_source, "primary", None), "chlorophyll_provider", None),
+        getattr(getattr(chlorophyll_source, "fallback", None), "chlorophyll_provider", None),
+    ):
+        if candidate is not None and hasattr(candidate, "get_chlorophyll_points"):
+            return candidate
+    return None
+
+
+def _resolve_grid_provider_bbox(
+    provider: object,
     zones: list[ZoneModel],
 ) -> tuple[float, float, float, float]:
-    min_lat = getattr(sst_provider, "min_lat", None)
-    max_lat = getattr(sst_provider, "max_lat", None)
-    min_lon = getattr(sst_provider, "min_lon", None)
-    max_lon = getattr(sst_provider, "max_lon", None)
+    min_lat = getattr(provider, "min_lat", None)
+    max_lat = getattr(provider, "max_lat", None)
+    min_lon = getattr(provider, "min_lon", None)
+    max_lon = getattr(provider, "max_lon", None)
     if None not in (min_lat, max_lat, min_lon, max_lon):
         return (float(min_lon), float(min_lat), float(max_lon), float(max_lat))
 
@@ -219,6 +301,7 @@ def build_ranked_zone(
         nearest_strong_break_distance_nm=signals.nearest_strong_break_distance_nm,
         structure_distance_nm=signals.structure_distance_nm,
         chlorophyll_mg_m3=signals.chlorophyll_mg_m3,
+        nearest_strong_chl_break_distance_nm=signals.nearest_strong_chl_break_distance_nm,
         current_speed_kts=signals.current_speed_kts,
         current_break_index=signals.current_break_index,
         weather_risk_index=signals.weather_risk_index,
@@ -240,5 +323,7 @@ def build_species_config(config: SpeciesScoringConfigModel) -> SpeciesConfig:
         preferred_temp_f=[config.preferred_temp_min_f, config.preferred_temp_max_f],
         ideal_chlorophyll_mg_m3=[config.ideal_chlorophyll_min, config.ideal_chlorophyll_max],
         ideal_current_kts=[config.ideal_current_min_kts, config.ideal_current_max_kts],
+        temp_break_config=build_temp_break_config(config.species),
+        chlorophyll_break_config=build_chlorophyll_break_config(config.species),
         weights=build_weighted_score_config(config),
     )

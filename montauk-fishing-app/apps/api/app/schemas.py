@@ -22,6 +22,7 @@ class ScoreBreakdown(BaseModel):
     temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
+    chlorophyll_break_proximity: float = 0.0
     current_suitability: float
     weather_fishability: float
 
@@ -32,8 +33,23 @@ class WeightedScoreConfig(BaseModel):
     temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
+    chlorophyll_break_proximity: float = 0.0
     current_suitability: float
     weather_fishability: float
+
+
+class TempBreakConfig(BaseModel):
+    strong_break_threshold_f_per_nm: float
+    full_score_distance_nm: float
+    zero_score_distance_nm: float
+    factor_weight: float
+
+
+class ChlorophyllBreakConfig(BaseModel):
+    strong_break_threshold_mg_m3_per_nm: float
+    full_score_distance_nm: float
+    zero_score_distance_nm: float
+    factor_weight: float
 
 
 class WeightedScoreBreakdown(BaseModel):
@@ -42,6 +58,7 @@ class WeightedScoreBreakdown(BaseModel):
     temp_break_proximity: float = 0.0
     structure_proximity: float
     chlorophyll_suitability: float
+    chlorophyll_break_proximity: float = 0.0
     current_suitability: float
     weather_fishability: float
 
@@ -54,6 +71,8 @@ class SpeciesConfig(BaseModel):
     preferred_temp_f: list[float]
     ideal_chlorophyll_mg_m3: list[float]
     ideal_current_kts: list[float]
+    temp_break_config: TempBreakConfig | None = None
+    chlorophyll_break_config: ChlorophyllBreakConfig | None = None
     weights: WeightedScoreConfig
 
 
@@ -70,6 +89,7 @@ class RankedZone(BaseModel):
     nearest_strong_break_distance_nm: float | None = None
     structure_distance_nm: float
     chlorophyll_mg_m3: float
+    nearest_strong_chl_break_distance_nm: float | None = None
     current_speed_kts: float
     current_break_index: float
     weather_risk_index: float

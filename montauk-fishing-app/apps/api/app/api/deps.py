@@ -260,7 +260,9 @@ def get_zones_service(session: DbSession) -> ZonesService:
         species_config_repository=species_config_repository,
         environmental_input_provider=get_environmental_input_provider(),
         sst_break_target_cells=settings.sst_break_scoring_target_cells,
+        chlorophyll_break_target_cells=settings.chlorophyll_break_scoring_target_cells,
         strong_break_threshold_f_per_nm=settings.sst_break_strong_threshold_f_per_nm,
+        strong_chlorophyll_break_threshold_mg_m3_per_nm=settings.chlorophyll_break_strong_threshold_mg_m3_per_nm,
     )
 
 

@@ -56,6 +56,8 @@ class ApiDepsTestCase(unittest.TestCase):
 
         self.assertGreaterEqual(len(configs), 1)
         self.assertEqual(configs[0].species, "bluefin")
+        self.assertIsNotNone(configs[0].temp_break_config)
+        self.assertIsNotNone(configs[0].chlorophyll_break_config)
 
     def test_species_config_service_falls_back_to_seeded_configs_when_database_session_fails(self) -> None:
         service = SpeciesConfigService(

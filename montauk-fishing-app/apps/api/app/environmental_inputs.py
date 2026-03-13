@@ -53,6 +53,7 @@ class ZoneEnvironmentalSignals:
     current_break_index: float
     weather_risk_index: float
     nearest_strong_break_distance_nm: float | None = None
+    nearest_strong_chl_break_distance_nm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -712,6 +713,7 @@ class ZoneEnvironmentalInputService:
                 nearest_strong_break_distance_nm=None,
                 structure_distance_nm=bathymetry.structure_distance_nm,
                 chlorophyll_mg_m3=chlorophyll.chlorophyll_mg_m3,
+                nearest_strong_chl_break_distance_nm=None,
                 current_speed_kts=current.current_speed_kts,
                 current_break_index=current.current_break_index,
                 weather_risk_index=weather.weather_risk_index,

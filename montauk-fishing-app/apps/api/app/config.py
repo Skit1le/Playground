@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     chlorophyll_bbox_max_lat: float = Field(default=41.4, alias="CHLOROPHYLL_BBOX_MAX_LAT")
     chlorophyll_bbox_min_lon: float = Field(default=-72.4, alias="CHLOROPHYLL_BBOX_MIN_LON")
     chlorophyll_bbox_max_lon: float = Field(default=-69.8, alias="CHLOROPHYLL_BBOX_MAX_LON")
+    chlorophyll_break_scoring_target_cells: int = Field(default=720, alias="CHLOROPHYLL_BREAK_SCORING_TARGET_CELLS")
+    chlorophyll_break_strong_threshold_mg_m3_per_nm: float = Field(
+        default=0.01,
+        alias="CHLOROPHYLL_BREAK_STRONG_THRESHOLD_MG_M3_PER_NM",
+    )
     live_chlorophyll_enabled: bool = Field(default=False, alias="LIVE_CHLOROPHYLL_ENABLED")
     live_chlorophyll_timeout_seconds: float = Field(default=2.0, alias="LIVE_CHLOROPHYLL_TIMEOUT_SECONDS")
     live_chlorophyll_base_url: str = Field(
