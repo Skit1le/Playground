@@ -128,13 +128,20 @@ class SstMapService:
                 "last_source_name",
                 getattr(self.sst_provider, "source_name", "unknown"),
             )
-            dataset_id = getattr(self.sst_provider, "last_dataset_id", None)
+            dataset_id = getattr(
+                self.sst_provider,
+                "last_dataset_id",
+                getattr(self.sst_provider, "configured_dataset_id", None),
+            )
             cache_key = getattr(self.sst_provider, "last_cache_key", "")
         except (SstDataUnavailableError, Exception):
             points = ()
             source = "unavailable"
-            dataset_id = None
+            dataset_id = getattr(self.sst_provider, "configured_dataset_id", None)
             cache_key = ""
+            failure_reason = getattr(self.sst_provider, "last_failure_reason", "")
+        else:
+            failure_reason = getattr(self.sst_provider, "last_failure_reason", "")
 
         temps = [point.sea_surface_temp_f for point in points]
         temp_range = [round(min(temps), 1), round(max(temps), 1)] if temps else None
@@ -147,6 +154,7 @@ class SstMapService:
                 "source": source,
                 "dataset_id": dataset_id,
                 "cache_key": cache_key,
+                "failure_reason": failure_reason,
                 "point_count": len(points),
                 "cell_count": len(features),
             },

@@ -1,5 +1,7 @@
+import ssl
 import unittest
 from datetime import date
+from urllib.error import URLError
 
 from app.sst_provider import (
     FallbackSstProvider,
@@ -274,6 +276,71 @@ class LiveCoastwatchSstAdapterTestCase(unittest.TestCase):
         self.assertEqual(len(url_open.calls), 1)
         self.assertEqual(adapter.last_dataset_id, "noaacwBLENDEDsstDaily")
 
+    def test_live_probe_reports_invalid_url(self) -> None:
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="://bad-url",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen(""),
+        )
+
+        result = adapter.probe_upstream_request(date(2026, 6, 18))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failure_reason"], "invalid_url")
+        self.assertEqual(result["exception_class"], "ValueError")
+
+    def test_get_sst_points_classifies_ssl_error(self) -> None:
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen(ssl.SSLError("certificate verify failed")),
+        )
+
+        with self.assertRaises(SstDataUnavailableError):
+            adapter.get_sst_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "ssl_error")
+
+    def test_get_sst_points_classifies_connection_error(self) -> None:
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen(URLError("connection refused")),
+        )
+
+        with self.assertRaises(SstDataUnavailableError):
+            adapter.get_sst_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "connection_error")
+
+    def test_get_sst_points_classifies_proxy_error(self) -> None:
+        adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen(URLError("proxy tunnel failed")),
+        )
+
+        with self.assertRaises(SstDataUnavailableError):
+            adapter.get_sst_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "proxy_error")
+
 
 class FakeSstProvider:
     def __init__(
@@ -359,6 +426,27 @@ class FallbackSstProviderTestCase(unittest.TestCase):
 
         self.assertEqual(observation.sea_surface_temp_f, 66.4)
         self.assertEqual(provider.last_source_name, "processed")
+
+    def test_get_sst_points_preserves_live_ssl_failure_reason_when_falling_back(self) -> None:
+        live_adapter = LiveCoastwatchSstAdapter(
+            dataset_id="noaacwBLENDEDsstDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen(ssl.SSLError("certificate verify failed")),
+        )
+        provider = FallbackSstProvider(
+            primary=live_adapter,
+            fallback=MockSstAdapter(),
+        )
+
+        points = provider.get_sst_points(date(2026, 6, 18))
+
+        self.assertGreaterEqual(len(points), 1)
+        self.assertEqual(provider.last_source_name, "mock_fallback")
+        self.assertEqual(provider.last_failure_reason, "ssl_error")
 
 
 if __name__ == "__main__":

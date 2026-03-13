@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import ssl
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
@@ -8,14 +9,16 @@ from io import StringIO
 from math import asin, cos, radians, sin, sqrt
 from typing import Any, Callable, Protocol, TypeAlias
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from urllib.request import urlopen
+import logging
 
 from app.ingested_products import load_processed_product
 from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS, ZONE_CATALOG
 
 _MISSING_POINTS: tuple["SstPoint", ...] = ()
 BBox: TypeAlias = tuple[float, float, float, float]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -199,8 +202,27 @@ class UpstreamCoastwatchSstAdapter:
         self.value_column_candidates = value_column_candidates
         self.timeout_seconds = timeout_seconds
         self.open_url = open_url
+        self.configured_dataset_id = dataset_id
         self.last_dataset_id = dataset_id
         self.last_cache_key = ""
+        self.last_failure_reason = ""
+        self.last_exception_class = ""
+        self.last_exception_message = ""
+
+    def _request_params(self, target_date: str, bbox: BBox) -> dict[str, Any]:
+        min_lat, max_lat, min_lon, max_lon = bbox
+        query = (
+            f"{self.variable_name}[({target_date}T00:00:00Z)]"
+            f"[({max_lat}):1:({min_lat})]"
+            f"[({min_lon}):1:({max_lon})]"
+        )
+        return {
+            "dataset_id": self.dataset_id,
+            "variable_name": self.variable_name,
+            "target_date": target_date,
+            "bbox": [min_lon, min_lat, max_lon, max_lat],
+            "query": query,
+        }
 
     def _default_bbox(self) -> BBox:
         return _normalize_bbox(
@@ -226,29 +248,184 @@ class UpstreamCoastwatchSstAdapter:
         )
 
     def _build_csv_url(self, target_date: str, bbox: BBox) -> str:
-        min_lat, max_lat, min_lon, max_lon = bbox
-        query = (
-            f"{self.variable_name}[({target_date}T00:00:00Z)]"
-            f"[({max_lat}):1:({min_lat})]"
-            f"[({min_lon}):1:({max_lon})]"
-        )
+        query = self._request_params(target_date, bbox)["query"]
         encoded_query = quote(query, safe="[]():,")
         return f"{self.base_url}/{self.dataset_id}.csv?{encoded_query}"
+
+    def _classify_request_error(self, exc: Exception) -> str:
+        if isinstance(exc, ValueError):
+            return "invalid_url"
+        if isinstance(exc, ssl.SSLError):
+            return "ssl_error"
+        if isinstance(exc, URLError):
+            reason = exc.reason
+            if isinstance(reason, ssl.SSLError):
+                return "ssl_error"
+            reason_text = str(reason).lower()
+            if "proxy" in reason_text:
+                return "proxy_error"
+            if "ssl" in reason_text or "certificate" in reason_text:
+                return "ssl_error"
+            if "unknown url type" in reason_text or "no host given" in reason_text:
+                return "invalid_url"
+            return "connection_error"
+        if isinstance(exc, OSError):
+            message = str(exc).lower()
+            if "ssl" in message or "certificate" in message:
+                return "ssl_error"
+            if "proxy" in message:
+                return "proxy_error"
+            return "connection_error"
+        return "request_exception"
+
+    def probe_upstream_request(
+        self,
+        trip_date: date,
+        *,
+        min_lat: float | None = None,
+        max_lat: float | None = None,
+        min_lon: float | None = None,
+        max_lon: float | None = None,
+    ) -> dict[str, Any]:
+        bbox = self._resolve_bbox(
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+        )
+        target_date = trip_date.isoformat()
+        request_params = self._request_params(target_date, bbox)
+        url = self._build_csv_url(target_date, bbox)
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            self.last_failure_reason = "invalid_url"
+            self.last_exception_class = "ValueError"
+            self.last_exception_message = "Malformed upstream SST URL"
+            return {
+                "ok": False,
+                "source": self.source_name,
+                "failure_reason": self.last_failure_reason,
+                "url": url,
+                "params": request_params,
+                "exception_class": self.last_exception_class,
+                "exception_message": self.last_exception_message,
+                "dataset_id": self.dataset_id,
+            }
+
+        points = self._load_points(target_date, bbox)
+        return {
+            "ok": bool(points),
+            "source": self.source_name,
+            "failure_reason": self.last_failure_reason or None,
+            "url": url,
+            "params": request_params,
+            "exception_class": self.last_exception_class or None,
+            "exception_message": self.last_exception_message or None,
+            "dataset_id": self.dataset_id,
+            "point_count": len(points),
+        }
 
     @lru_cache(maxsize=32)
     def _load_points(self, target_date: str, bbox: BBox) -> tuple[SstPoint, ...]:
         if not self.dataset_id or self.dataset_id.startswith("CONFIGURE_"):
+            self.last_failure_reason = "missing_dataset_id"
+            self.last_exception_class = ""
+            self.last_exception_message = ""
             return _MISSING_POINTS
 
         url = self._build_csv_url(target_date, bbox)
+        request_params = self._request_params(target_date, bbox)
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            self.last_failure_reason = "invalid_url"
+            self.last_exception_class = "ValueError"
+            self.last_exception_message = "Malformed upstream SST URL"
+            logger.warning(
+                "Live SST request URL is invalid",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "request_url": url,
+                    "request_params": request_params,
+                    "base_url": self.base_url,
+                },
+            )
+            return _MISSING_POINTS
         try:
             with self.open_url(url, timeout=self.timeout_seconds) as response:
                 raw_text = response.read().decode("utf-8")
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        except TimeoutError:
+            self.last_failure_reason = "upstream_timeout"
+            self.last_exception_class = "TimeoutError"
+            self.last_exception_message = "The upstream SST request timed out."
+            logger.warning(
+                "Live SST fetch timed out",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "base_url": self.base_url,
+                    "request_url": url,
+                    "request_params": request_params,
+                },
+            )
+            return _MISSING_POINTS
+        except HTTPError as exc:
+            self.last_failure_reason = f"upstream_http_{exc.code}"
+            self.last_exception_class = type(exc).__name__
+            self.last_exception_message = str(exc)
+            logger.warning(
+                "Live SST fetch returned HTTP error",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "base_url": self.base_url,
+                    "status_code": exc.code,
+                    "request_url": url,
+                    "request_params": request_params,
+                    "exception_class": type(exc).__name__,
+                    "exception_message": str(exc),
+                },
+            )
+            return _MISSING_POINTS
+        except (URLError, OSError, ValueError, ssl.SSLError) as exc:
+            self.last_failure_reason = self._classify_request_error(exc)
+            self.last_exception_class = type(exc).__name__
+            self.last_exception_message = str(exc)
+            logger.warning(
+                "Live SST fetch failed before parsing",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "base_url": self.base_url,
+                    "request_url": url,
+                    "request_params": request_params,
+                    "exception_class": type(exc).__name__,
+                    "exception_message": str(exc),
+                    "failure_reason": self.last_failure_reason,
+                },
+            )
             return _MISSING_POINTS
 
         reader = csv.DictReader(StringIO(raw_text))
+        if not reader.fieldnames:
+            self.last_failure_reason = "bad_response_shape"
+            self.last_exception_class = ""
+            self.last_exception_message = ""
+            logger.warning(
+                "Live SST response had no CSV headers",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "request_url": url,
+                    "request_params": request_params,
+                },
+            )
+            return _MISSING_POINTS
         points: list[SstPoint] = []
+        value_column_found = False
         for row in reader:
             try:
                 point_lat = float(row["latitude"])
@@ -256,6 +433,7 @@ class UpstreamCoastwatchSstAdapter:
                 value_text = _select_value_column(row, self.value_column_candidates)
                 if value_text is None:
                     continue
+                value_column_found = True
                 points.append(
                     SstPoint(
                         latitude=point_lat,
@@ -265,6 +443,42 @@ class UpstreamCoastwatchSstAdapter:
                 )
             except (KeyError, TypeError, ValueError):
                 continue
+        if not value_column_found:
+            self.last_failure_reason = "variable_not_found"
+            self.last_exception_class = ""
+            self.last_exception_message = ""
+            logger.warning(
+                "Live SST response did not contain the configured value column",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "variable_name": self.variable_name,
+                    "fieldnames": reader.fieldnames,
+                    "request_url": url,
+                    "request_params": request_params,
+                },
+            )
+            return _MISSING_POINTS
+        if not points:
+            self.last_failure_reason = "bad_response_shape"
+            self.last_exception_class = ""
+            self.last_exception_message = ""
+            logger.warning(
+                "Live SST response was parsed but yielded no valid points",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": target_date,
+                    "bbox": request_params["bbox"],
+                    "variable_name": self.variable_name,
+                    "request_url": url,
+                    "request_params": request_params,
+                },
+            )
+            return _MISSING_POINTS
+        self.last_failure_reason = ""
+        self.last_exception_class = ""
+        self.last_exception_message = ""
         return tuple(points)
 
     def get_sst_points(
@@ -290,6 +504,15 @@ class UpstreamCoastwatchSstAdapter:
             max_lon=bbox[3],
         )
         if not points:
+            logger.warning(
+                "Live SST dataset unavailable for request",
+                extra={
+                    "dataset_id": self.dataset_id,
+                    "trip_date": trip_date.isoformat(),
+                    "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
+                    "failure_reason": self.last_failure_reason or "unknown",
+                },
+            )
             raise SstDataUnavailableError(f"No live SST payload found for {trip_date.isoformat()}.")
         self.last_dataset_id = self.dataset_id
         self.last_cache_key = f"{trip_date.isoformat()}|{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}"
@@ -339,6 +562,7 @@ class ProcessedCoastwatchSstAdapter:
         self.max_lon = max_lon
         self.gradient_radius_nm = gradient_radius_nm
         self.load_product = load_product
+        self.configured_dataset_id = None
         self.last_dataset_id = None
         self.last_cache_key = ""
 
@@ -429,6 +653,7 @@ class MockSstAdapter:
     ):
         self.zone_catalog = zone_catalog or ZONE_CATALOG
         self.records = records or MOCK_ZONE_ENVIRONMENTAL_SIGNALS
+        self.configured_dataset_id = None
         self.last_dataset_id = None
         self.last_cache_key = ""
 
@@ -500,8 +725,10 @@ class FallbackSstProvider:
         self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
         self.source_name = getattr(primary, "source_name", "processed")
+        self.configured_dataset_id = getattr(primary, "configured_dataset_id", getattr(primary, "dataset_id", None))
         self.last_dataset_id: str | None = None
         self.last_cache_key = ""
+        self.last_failure_reason = ""
 
     def _resolve_fallback_source_name(self) -> str:
         return getattr(
@@ -541,14 +768,37 @@ class FallbackSstProvider:
             self.last_source_name = self._resolve_primary_source_name()
             self.last_dataset_id = self._resolve_primary_dataset_id()
             self.last_cache_key = self._resolve_primary_cache_key()
+            self.last_failure_reason = ""
             return observation
-        except (SstDataUnavailableError, TimeoutError):
+        except (SstDataUnavailableError, TimeoutError) as exc:
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
+            logger.warning(
+                "Primary SST provider failed for zone lookup; falling back",
+                extra={
+                    "zone_id": zone_id,
+                    "trip_date": trip_date.isoformat(),
+                    "primary_source": getattr(self.primary, "source_name", "unknown"),
+                    "fallback_source": getattr(self.fallback, "source_name", "mock_fallback"),
+                    "failure_reason": self.last_failure_reason or "unknown",
+                },
+            )
             observation = self.fallback.get_zone_sst(zone_id, latitude, longitude, trip_date)
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
             return observation
-        except Exception:
+        except Exception as exc:
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
+            logger.exception(
+                "Primary SST provider raised unexpectedly for zone lookup; falling back",
+                extra={
+                    "zone_id": zone_id,
+                    "trip_date": trip_date.isoformat(),
+                    "primary_source": getattr(self.primary, "source_name", "unknown"),
+                    "fallback_source": getattr(self.fallback, "source_name", "mock_fallback"),
+                    "failure_reason": self.last_failure_reason or "unknown",
+                },
+            )
             observation = self.fallback.get_zone_sst(zone_id, latitude, longitude, trip_date)
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
@@ -575,8 +825,20 @@ class FallbackSstProvider:
             self.last_source_name = self._resolve_primary_source_name()
             self.last_dataset_id = self._resolve_primary_dataset_id()
             self.last_cache_key = self._resolve_primary_cache_key()
+            self.last_failure_reason = ""
             return points
-        except (SstDataUnavailableError, TimeoutError):
+        except (SstDataUnavailableError, TimeoutError) as exc:
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
+            logger.warning(
+                "Primary SST provider failed for map/grid lookup; falling back",
+                extra={
+                    "trip_date": trip_date.isoformat(),
+                    "bbox": [min_lon, min_lat, max_lon, max_lat],
+                    "primary_source": getattr(self.primary, "source_name", "unknown"),
+                    "fallback_source": getattr(self.fallback, "source_name", "mock_fallback"),
+                    "failure_reason": self.last_failure_reason or "unknown",
+                },
+            )
             points = self.fallback.get_sst_points(
                 trip_date,
                 min_lat=min_lat,
@@ -588,7 +850,18 @@ class FallbackSstProvider:
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
             return points
-        except Exception:
+        except Exception as exc:
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
+            logger.exception(
+                "Primary SST provider raised unexpectedly for map/grid lookup; falling back",
+                extra={
+                    "trip_date": trip_date.isoformat(),
+                    "bbox": [min_lon, min_lat, max_lon, max_lat],
+                    "primary_source": getattr(self.primary, "source_name", "unknown"),
+                    "fallback_source": getattr(self.fallback, "source_name", "mock_fallback"),
+                    "failure_reason": self.last_failure_reason or "unknown",
+                },
+            )
             points = self.fallback.get_sst_points(
                 trip_date,
                 min_lat=min_lat,

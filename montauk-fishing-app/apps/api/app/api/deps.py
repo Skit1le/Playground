@@ -1,4 +1,5 @@
 from functools import lru_cache
+import logging
 from typing import Annotated
 
 from fastapi import Depends
@@ -46,6 +47,7 @@ from app.structure_provider import ProcessedStructureAdapter
 from app.weather_provider import ProcessedWeatherAdapter
 
 DbSession = Annotated[Session, Depends(get_db_session)]
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -118,7 +120,25 @@ def get_sst_provider() -> FallbackSstProvider:
         timeout_seconds=settings.processed_lookup_timeout_seconds,
     )
     if not settings.live_sst_enabled:
+        logger.info(
+            "Live SST disabled; using processed->mock fallback chain",
+            extra={
+                "live_sst_enabled": settings.live_sst_enabled,
+                "live_sst_dataset_id": settings.live_sst_dataset_id,
+                "live_sst_base_url": settings.live_sst_base_url,
+                "live_sst_variable_name": settings.live_sst_variable_name,
+            },
+        )
         return processed_fallback
+    logger.info(
+        "Live SST enabled; using live->processed->mock fallback chain",
+        extra={
+            "live_sst_enabled": settings.live_sst_enabled,
+            "live_sst_dataset_id": settings.live_sst_dataset_id,
+            "live_sst_base_url": settings.live_sst_base_url,
+            "live_sst_variable_name": settings.live_sst_variable_name,
+        },
+    )
     return FallbackSstProvider(
         primary=get_live_sst_provider(),
         fallback=processed_fallback,
