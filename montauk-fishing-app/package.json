@@ -6,6 +6,7 @@
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace @montauk/web",
+    "dev:web:single": "node scripts/start_web_single_process.cjs",
     "build:web": "npm run build --workspace @montauk/web",
     "lint:web": "npm run lint --workspace @montauk/web"
   },

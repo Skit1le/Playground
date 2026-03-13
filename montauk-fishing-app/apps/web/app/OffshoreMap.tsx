@@ -52,6 +52,12 @@ type OffshoreMapProps = {
   sstMapError: string | null;
 };
 
+type MapLibreRuntime = {
+  Map: new (...args: any[]) => any;
+  NavigationControl: new (...args: any[]) => any;
+  Popup: new (...args: any[]) => any;
+};
+
 const DEFAULT_CENTER: [number, number] = [-71.9442, 41.0359];
 const DEFAULT_BOUNDS: [[number, number], [number, number]] = [
   [-72.45, 39.85],
@@ -116,6 +122,54 @@ function getSourceLabel(source: string | null): string {
   return "SST source unknown";
 }
 
+function loadMapLibreRuntime(): Promise<MapLibreRuntime> {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Map runtime unavailable during server rendering."));
+  }
+
+  const runtimeWindow = window as Window & { maplibregl?: MapLibreRuntime };
+  if (runtimeWindow.maplibregl) {
+    return Promise.resolve(runtimeWindow.maplibregl);
+  }
+
+  return new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-maplibre-runtime="true"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => {
+        if (runtimeWindow.maplibregl) {
+          resolve(runtimeWindow.maplibregl);
+          return;
+        }
+        reject(new Error("MapLibre script loaded without exposing window.maplibregl."));
+      });
+      existingScript.addEventListener("error", () => reject(new Error("Failed to load MapLibre script.")));
+      return;
+    }
+
+    if (!document.querySelector('link[data-maplibre-runtime="true"]')) {
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = "https://unpkg.com/maplibre-gl@5.20.0/dist/maplibre-gl.css";
+      stylesheet.dataset.maplibreRuntime = "true";
+      document.head.appendChild(stylesheet);
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/maplibre-gl@5.20.0/dist/maplibre-gl.js";
+    script.async = true;
+    script.dataset.maplibreRuntime = "true";
+    script.onload = () => {
+      if (runtimeWindow.maplibregl) {
+        resolve(runtimeWindow.maplibregl);
+        return;
+      }
+      reject(new Error("MapLibre script loaded without exposing window.maplibregl."));
+    };
+    script.onerror = () => reject(new Error("Failed to load MapLibre script."));
+    document.body.appendChild(script);
+  });
+}
+
 export default function OffshoreMap({
   zones,
   sstMapData,
@@ -129,6 +183,7 @@ export default function OffshoreMap({
   const popupRef = useRef<any>(null);
   const [sstOpacity, setSstOpacity] = useState(0.62);
   const [mapReady, setMapReady] = useState(false);
+  const [mapRuntimeError, setMapRuntimeError] = useState<string | null>(null);
 
   const zoneGeoJson = useMemo(() => buildZoneFeatureCollection(zones), [zones]);
   const sstGeoJson = useMemo(
@@ -148,7 +203,13 @@ export default function OffshoreMap({
         return;
       }
 
-      const maplibre = await import("maplibre-gl");
+      let maplibre: MapLibreRuntime;
+      try {
+        maplibre = await loadMapLibreRuntime();
+      } catch (error: unknown) {
+        setMapRuntimeError(error instanceof Error ? error.message : "Failed to load MapLibre.");
+        return;
+      }
       if (disposed || !mapContainerRef.current) {
         return;
       }
@@ -266,7 +327,7 @@ export default function OffshoreMap({
           offset: 12,
         });
 
-        map.on("mousemove", "sst-grid-circles", (event) => {
+        map.on("mousemove", "sst-grid-circles", (event: any) => {
           const feature = event.features?.[0] as SstMapFeature | undefined;
           if (!feature || !popupRef.current) {
             return;
@@ -283,7 +344,7 @@ export default function OffshoreMap({
           popupRef.current?.remove();
         });
 
-        map.on("mousemove", "ranked-zones-circles", (event) => {
+        map.on("mousemove", "ranked-zones-circles", (event: any) => {
           const feature = event.features?.[0] as
             | {
                 geometry: { coordinates: [number, number] };
@@ -356,7 +417,8 @@ export default function OffshoreMap({
     map.setPaintProperty("sst-grid-circles", "circle-opacity", sstOpacity);
   }, [sstOpacity]);
 
-  const overlayUnavailable = Boolean(sstMapError) || sstMapData?.metadata.source === "unavailable";
+  const overlayUnavailable =
+    Boolean(sstMapError) || Boolean(mapRuntimeError) || sstMapData?.metadata.source === "unavailable";
 
   return (
     <>
@@ -367,7 +429,7 @@ export default function OffshoreMap({
           <p className={styles.eyebrow}>Montauk Offshore Intelligence</p>
           <h1 className={styles.title}>Read the water before the run.</h1>
           <p className={styles.subtitle}>
-            A real Montauk offshore map with ranked-zone markers over a backend-driven SST layer.
+            A real Montauk offshore map with ranked-zone markers and a backend-driven SST layer.
           </p>
         </div>
 
@@ -416,6 +478,7 @@ export default function OffshoreMap({
         {isZonesLoading && <p className={styles.loadingBanner}>Refreshing zone rankings...</p>}
         {isSstMapLoading && <p className={styles.loadingBanner}>Refreshing SST overlay...</p>}
         {zonesError && <p className={styles.errorBanner}>{zonesError}</p>}
+        {mapRuntimeError && <p className={styles.errorBanner}>{mapRuntimeError}</p>}
         {overlayUnavailable && (
           <p className={styles.errorBanner}>
             SST overlay unavailable. Zone markers remain active while the backend falls back or recovers.

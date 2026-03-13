@@ -1,8 +1,12 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState, type ChangeEvent } from "react";
-import OffshoreMap from "./OffshoreMap";
 import styles from "./page.module.css";
+
+const OffshoreMap = dynamic(() => import("./OffshoreMap"), {
+  ssr: false,
+});
 
 type Zone = {
   id: string;
