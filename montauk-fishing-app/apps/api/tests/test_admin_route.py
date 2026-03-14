@@ -4,8 +4,16 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from app.api.routes.admin import capture_zone_score_snapshots, get_backtest_report
+from app.api.routes.admin import (
+    capture_zone_score_snapshots,
+    get_backtest_report,
+    inspect_chlorophyll_cache,
+    warm_chlorophyll_cache,
+)
 from app.schemas import (
+    ChlorophyllCacheInspectionResponse,
+    ChlorophyllCacheWarmResponse,
+    ChlorophyllCacheWarmResult,
     OutcomeBacktestReport,
     OutcomeCalibrationGap,
     TripOutcomeRecord,
@@ -115,6 +123,37 @@ class FakeTripOutcomeService:
         ]
 
 
+class FakeChlorophyllCacheService:
+    def warm_cache(self, request) -> ChlorophyllCacheWarmResponse:
+        return ChlorophyllCacheWarmResponse(
+            requested_dates=list(request.requested_dates),
+            bboxes=[list(bbox) for bbox in request.bboxes],
+            mode=request.mode,
+            warmed_count=1,
+            failed_count=0,
+            results=[
+                ChlorophyllCacheWarmResult(
+                    requested_date=request.requested_dates[0],
+                    bbox=list(request.bboxes[0]),
+                    success=True,
+                    source="live",
+                    dataset_id="live-dataset",
+                    cache_key="cache-key",
+                    cache_path="D:/cache/example.json",
+                    resolved_timestamp="2025-09-14T12:00:00Z",
+                    point_count=24,
+                )
+            ],
+        )
+
+    def inspect_cache(self) -> ChlorophyllCacheInspectionResponse:
+        return ChlorophyllCacheInspectionResponse(
+            cache_dir="D:/cache",
+            entry_count=1,
+            entries=[],
+        )
+
+
 class AdminRouteTestCase(unittest.TestCase):
     def test_capture_zone_score_snapshots_delegates_to_service(self) -> None:
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(database_status="ok")))
@@ -155,6 +194,27 @@ class AdminRouteTestCase(unittest.TestCase):
 
         self.assertEqual(response.outcome_count, 1)
         self.assertEqual(response.compared_count, 1)
+
+    def test_warm_chlorophyll_cache_delegates_to_service(self) -> None:
+        response = warm_chlorophyll_cache(
+            chlorophyll_cache_service=FakeChlorophyllCacheService(),
+            date_value="2025-09-14",
+            date_from=None,
+            date_to=None,
+            bbox=["-72.4,39.8,-69.8,41.4"],
+            mode="live",
+        )
+
+        self.assertEqual(response.warmed_count, 1)
+        self.assertEqual(response.mode, "live")
+
+    def test_inspect_chlorophyll_cache_returns_entries(self) -> None:
+        response = inspect_chlorophyll_cache(
+            chlorophyll_cache_service=FakeChlorophyllCacheService(),
+        )
+
+        self.assertEqual(response.cache_dir, "D:/cache")
+        self.assertEqual(response.entry_count, 1)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,32 @@ class Settings(BaseSettings):
     )
     live_chlorophyll_time_suffix: str = Field(default="T12:00:00Z", alias="LIVE_CHLOROPHYLL_TIME_SUFFIX")
     live_chlorophyll_extra_selectors: str = Field(default="[(0.0)]", alias="LIVE_CHLOROPHYLL_EXTRA_SELECTORS")
+    secondary_live_chlorophyll_enabled: bool = Field(default=False, alias="SECONDARY_LIVE_CHLOROPHYLL_ENABLED")
+    secondary_live_chlorophyll_timeout_seconds: float = Field(default=3.0, alias="SECONDARY_LIVE_CHLOROPHYLL_TIMEOUT_SECONDS")
+    secondary_live_chlorophyll_base_url: str = Field(
+        default="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+        alias="SECONDARY_LIVE_CHLOROPHYLL_BASE_URL",
+    )
+    secondary_live_chlorophyll_dataset_id: str = Field(
+        default="",
+        alias="SECONDARY_LIVE_CHLOROPHYLL_DATASET_ID",
+    )
+    secondary_live_chlorophyll_variable_name: str = Field(
+        default="chlor_a",
+        alias="SECONDARY_LIVE_CHLOROPHYLL_VARIABLE_NAME",
+    )
+    secondary_live_chlorophyll_time_suffix: str = Field(
+        default="T12:00:00Z",
+        alias="SECONDARY_LIVE_CHLOROPHYLL_TIME_SUFFIX",
+    )
+    secondary_live_chlorophyll_extra_selectors: str = Field(
+        default="[(0.0)]",
+        alias="SECONDARY_LIVE_CHLOROPHYLL_EXTRA_SELECTORS",
+    )
+    chlorophyll_cache_dir: str = Field(
+        default=str(API_ROOT / ".cache" / "chlorophyll"),
+        alias="CHLOROPHYLL_CACHE_DIR",
+    )
     current_bbox_min_lat: float = Field(default=39.8, alias="CURRENT_BBOX_MIN_LAT")
     current_bbox_max_lat: float = Field(default=41.4, alias="CURRENT_BBOX_MAX_LAT")
     current_bbox_min_lon: float = Field(default=-72.4, alias="CURRENT_BBOX_MIN_LON")

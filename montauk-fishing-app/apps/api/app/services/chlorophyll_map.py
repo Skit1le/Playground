@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _resolve_source_status(source: str) -> str:
     if source == "live":
         return "live"
-    if source == "processed":
+    if source in {"processed", "cached_real"}:
         return "cached"
     if source == "mock":
         return "seed"
@@ -39,6 +39,8 @@ def _resolve_source_status(source: str) -> str:
 def _build_warning_messages(*, source: str, failure_reason: str) -> list[str]:
     if source == "processed":
         return ["Showing cached chlorophyll data while live satellite chlorophyll is unavailable."]
+    if source == "cached_real":
+        return ["Showing last-known-good real chlorophyll because live chlorophyll feeds are unavailable."]
     if source == "mock_fallback":
         if failure_reason in {"parse_error", "empty_dataset"}:
             return ["Showing a local chlorophyll estimate because the live satellite feed had no usable values for this request."]
@@ -234,7 +236,7 @@ class ChlorophyllBreakMapService:
                 source=source,
                 source_status=_resolve_source_status(source),
                 live_data_available=source == "live",
-                fallback_used=source in {"processed", "mock_fallback"},
+                fallback_used=source in {"processed", "cached_real", "mock_fallback"},
                 provider_name=type(self.chlorophyll_provider).__name__,
                 dataset_id=dataset_id,
                 upstream_host=getattr(self.chlorophyll_provider, "last_upstream_host", None),

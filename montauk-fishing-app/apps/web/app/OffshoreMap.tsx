@@ -64,7 +64,7 @@ type SstMapResponse = {
   metadata: {
     date: string;
     bbox: [number, number, number, number];
-    source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
+    source: "live" | "processed" | "cached_real" | "mock_fallback" | "unavailable" | string;
     warning_messages?: string[] | null;
     units: "fahrenheit";
     point_count: number;
@@ -173,6 +173,9 @@ function getSourceLabel(source: string | null): string {
   if (source === "live") {
     return "Live SST";
   }
+  if (source === "cached_real") {
+    return "Cached real SST";
+  }
   if (source === "processed") {
     return "Processed SST";
   }
@@ -188,6 +191,9 @@ function getSourceLabel(source: string | null): string {
 function getChlorophyllSourceLabel(source: string | null): string {
   if (source === "live") {
     return "Live chlorophyll";
+  }
+  if (source === "cached_real") {
+    return "Cached real chlorophyll";
   }
   if (source === "processed") {
     return "Cached chlorophyll";

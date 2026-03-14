@@ -159,7 +159,7 @@ type SstMapResponse = {
   metadata: {
     date: string;
     bbox: [number, number, number, number];
-    source: "live" | "processed" | "mock_fallback" | "unavailable" | string;
+    source: "live" | "processed" | "cached_real" | "mock_fallback" | "unavailable" | string;
     source_status?: string;
     live_data_available?: boolean;
     fallback_used?: boolean;

@@ -119,8 +119,10 @@ class FakeChlorophyllProvider:
         self,
         observation: ChlorophyllObservation | Exception,
         points: tuple[ChlorophyllPoint, ...] | None = None,
+        source_name: str = "processed",
     ):
         self.observation = observation
+        self.source_name = source_name
         self.calls: list[tuple[str, date]] = []
         self.min_lat = 39.8
         self.max_lat = 41.4
@@ -1155,6 +1157,40 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertLess(ranked_zone.score_explanation.confidence_score, ranked_zone.score)
         self.assertTrue(
             any("chlorophyll is estimated" in watchout.lower() for watchout in ranked_zone.score_explanation.watchouts)
+        )
+
+    def test_ranked_zone_reflects_cached_real_chlorophyll_in_source_metadata_and_watchouts(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        cached_provider = FakeChlorophyllProvider(ChlorophyllObservation(chlorophyll_mg_m3=0.29))
+        cached_provider.source_name = "cached_real"
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([zone]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=ZoneEnvironmentalInputService(
+                chlorophyll_source=ChlorophyllBackedSource(cached_provider),
+                signal_store=MockZoneEnvironmentalSignalStore(
+                    records={
+                        "prime-edge": {
+                            "sea_surface_temp_f": 64.2,
+                            "temp_gradient_f_per_nm": 1.1,
+                            "structure_distance_nm": 2.1,
+                            "chlorophyll_mg_m3": 0.29,
+                            "current_speed_kts": 1.3,
+                            "current_break_index": 0.7,
+                            "weather_risk_index": 0.18,
+                        }
+                    }
+                ),
+            ),
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.source_metadata.chlorophyll.source, "cached_real")
+        self.assertEqual(ranked_zone.source_metadata.chlorophyll.source_status, "cached")
+        self.assertTrue(ranked_zone.source_metadata.chlorophyll.fallback_used)
+        self.assertTrue(
+            any("last known good real feed" in watchout.lower() for watchout in ranked_zone.score_explanation.watchouts)
         )
 
     def test_zone_environmental_input_service_falls_back_when_current_provider_fails(self) -> None:

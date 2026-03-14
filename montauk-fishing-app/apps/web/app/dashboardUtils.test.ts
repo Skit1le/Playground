@@ -81,6 +81,12 @@ function runDashboardUtilsAssertions(): void {
     "Live chlorophyll is blocked from reaching coastwatch.pfeg.noaa.gov in this environment, so a fallback estimate is being used.",
   );
   assert.equal(
+    buildLayerStatusMessage("chlorophyll", {
+      source: "cached_real",
+    }),
+    "Showing last-known-good real chlorophyll data while live chlorophyll feeds are unavailable.",
+  );
+  assert.equal(
     buildApiTimeoutMessage("/map/sst?date=2026-03-11", 5000, "http://127.0.0.1:8000"),
     "Request timed out after 5000 ms while requesting /map/sst?date=2026-03-11 from http://127.0.0.1:8000. The API may be slow, but it is not necessarily unavailable.",
   );

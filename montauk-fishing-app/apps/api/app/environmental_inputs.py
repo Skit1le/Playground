@@ -72,7 +72,7 @@ class ZoneSignalSourceMetadata:
     def source_status(self) -> str:
         if self.source == "live":
             return "live"
-        if self.source == "processed":
+        if self.source in {"processed", "cached_real"}:
             return "cached"
         if self.source == "mock":
             return "seed"
@@ -88,7 +88,7 @@ class ZoneSignalSourceMetadata:
 
     @property
     def fallback_used(self) -> bool:
-        return self.source in {"processed", "mock", "mock_fallback"}
+        return self.source in {"processed", "cached_real", "mock", "mock_fallback"}
 
 
 @dataclass(frozen=True)
@@ -129,6 +129,8 @@ class ResolvedZoneEnvironmentalInputs:
 def _build_source_warning_messages(*, label: str, source_name: str, failure_reason: str | None) -> tuple[str, ...]:
     if source_name == "processed":
         return (f"Using cached {label} data instead of a live {label} feed for this request.",)
+    if source_name == "cached_real":
+        return (f"Using last-known-good real {label} data because live {label} feeds are unavailable.",)
     if source_name == "mock":
         return (f"Using seeded {label} reference data for this request.",)
     if source_name == "mock_fallback":

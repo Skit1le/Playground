@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import errno
+import hashlib
+import json
 import logging
 import math
 import re
@@ -9,10 +11,11 @@ import socket
 import ssl
 import subprocess
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import lru_cache
 from io import StringIO
 from math import asin, cos, radians, sin, sqrt
+from pathlib import Path
 from typing import Any, Callable, Protocol, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
@@ -156,6 +159,11 @@ def _build_observation_from_points(
 
     candidates.sort(key=lambda item: item[0])
     return ChlorophyllObservation(chlorophyll_mg_m3=round(candidates[0][1], 4))
+
+
+def _bbox_to_cache_token(bbox: BBox) -> str:
+    raw = f"{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
 class UpstreamCoastwatchChlorophyllAdapter:
@@ -955,6 +963,271 @@ class MockChlorophyllAdapter:
         self.last_dataset_id = None
         self.last_cache_key = f"{trip_date.isoformat()}|mock"
         return ChlorophyllObservation(chlorophyll_mg_m3=float(signal_record["chlorophyll_mg_m3"]))
+
+
+class CachedChlorophyllSnapshotAdapter:
+    source_name = "cached_real"
+
+    def __init__(
+        self,
+        *,
+        cache_dir: str | Path,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        seed_provider: ChlorophyllProvider | None = None,
+    ):
+        self.cache_dir = Path(cache_dir)
+        self.min_lat = min_lat
+        self.max_lat = max_lat
+        self.min_lon = min_lon
+        self.max_lon = max_lon
+        self.seed_provider = seed_provider
+        self.configured_dataset_id = None
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
+        self.last_failure_reason = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
+
+    def _default_bbox(self) -> BBox:
+        return _normalize_bbox(
+            min_lat=self.min_lat,
+            max_lat=self.max_lat,
+            min_lon=self.min_lon,
+            max_lon=self.max_lon,
+        )
+
+    def _resolve_bbox(
+        self,
+        *,
+        min_lat: float | None,
+        max_lat: float | None,
+        min_lon: float | None,
+        max_lon: float | None,
+    ) -> BBox:
+        return _normalize_bbox(
+            min_lat=self.min_lat if min_lat is None else min_lat,
+            max_lat=self.max_lat if max_lat is None else max_lat,
+            min_lon=self.min_lon if min_lon is None else min_lon,
+            max_lon=self.max_lon if max_lon is None else max_lon,
+        )
+
+    def _paths(self, target_date: str, bbox: BBox) -> tuple[Path, Path]:
+        token = _bbox_to_cache_token(bbox)
+        base_dir = self.cache_dir / token
+        exact_path = base_dir / f"{target_date}.json"
+        latest_path = base_dir / "latest.json"
+        return exact_path, latest_path
+
+    def _read_snapshot(self, path: Path) -> tuple[ChlorophyllPoint, ...]:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        points = tuple(
+            ChlorophyllPoint(
+                latitude=float(point["latitude"]),
+                longitude=float(point["longitude"]),
+                chlorophyll_mg_m3=float(point["chlorophyll_mg_m3"]),
+            )
+            for point in payload.get("points", [])
+        )
+        if not points:
+            raise ChlorophyllDataUnavailableError("Cached chlorophyll snapshot was empty.")
+        self.last_dataset_id = payload.get("dataset_id")
+        self.last_resolved_timestamp = payload.get("resolved_timestamp") or payload.get("requested_date", "")
+        self.last_cache_key = payload.get("cache_key", path.stem)
+        self.last_failure_reason = ""
+        self.last_upstream_host = payload.get("upstream_host")
+        self.last_attempted_urls = list(payload.get("attempted_urls", []) or [])
+        self.last_provider_diagnostics = {
+            "cache_kind": payload.get("cache_kind", "last_known_good"),
+            "cached_at": payload.get("cached_at"),
+            "seed_source": payload.get("seed_source"),
+        }
+        return points
+
+    def store_snapshot(
+        self,
+        *,
+        requested_date: str,
+        bbox: BBox,
+        points: tuple[ChlorophyllPoint, ...],
+        dataset_id: str | None,
+        resolved_timestamp: str,
+        upstream_host: str | None,
+        attempted_urls: list[str],
+        provider_diagnostics: dict[str, str | int | float | bool | None],
+        seed_source: str,
+    ) -> None:
+        if not points:
+            return
+        exact_path, latest_path = self._paths(requested_date, bbox)
+        exact_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "requested_date": requested_date,
+            "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
+            "dataset_id": dataset_id,
+            "resolved_timestamp": resolved_timestamp,
+            "upstream_host": upstream_host,
+            "attempted_urls": attempted_urls,
+            "provider_diagnostics": provider_diagnostics,
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+            "cache_kind": "last_known_good",
+            "seed_source": seed_source,
+            "cache_key": f"{requested_date}|{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}",
+            "points": [
+                {
+                    "latitude": point.latitude,
+                    "longitude": point.longitude,
+                    "chlorophyll_mg_m3": point.chlorophyll_mg_m3,
+                }
+                for point in points
+            ],
+        }
+        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+        exact_path.write_text(encoded, encoding="utf-8")
+        latest_path.write_text(encoded, encoding="utf-8")
+
+    def _load_or_seed(self, target_date: str, bbox: BBox) -> tuple[ChlorophyllPoint, ...]:
+        exact_path, latest_path = self._paths(target_date, bbox)
+        for path in (exact_path, latest_path):
+            if path.exists():
+                return self._read_snapshot(path)
+        if self.seed_provider is None:
+            self.last_failure_reason = "empty_dataset"
+            raise ChlorophyllDataUnavailableError(f"No cached chlorophyll snapshot found for {target_date}.")
+        try:
+            points = self.seed_provider.get_chlorophyll_points(
+                date.fromisoformat(target_date),
+                min_lat=bbox[0],
+                max_lat=bbox[1],
+                min_lon=bbox[2],
+                max_lon=bbox[3],
+            )
+        except Exception as exc:
+            self.last_failure_reason = getattr(self.seed_provider, "last_failure_reason", "") or str(exc)
+            raise ChlorophyllDataUnavailableError(f"No cached chlorophyll snapshot found for {target_date}.") from exc
+        self.store_snapshot(
+            requested_date=target_date,
+            bbox=bbox,
+            points=points,
+            dataset_id=getattr(self.seed_provider, "last_dataset_id", None),
+            resolved_timestamp=getattr(self.seed_provider, "last_resolved_timestamp", "") or target_date,
+            upstream_host=getattr(self.seed_provider, "last_upstream_host", None),
+            attempted_urls=list(getattr(self.seed_provider, "last_attempted_urls", []) or []),
+            provider_diagnostics=dict(getattr(self.seed_provider, "last_provider_diagnostics", {}) or {}),
+            seed_source=getattr(self.seed_provider, "source_name", "processed"),
+        )
+        self.last_provider_diagnostics = {"cache_kind": "seeded_from_processed"}
+        return points
+
+    def get_chlorophyll_points(
+        self,
+        trip_date: date,
+        *,
+        min_lat: float | None = None,
+        max_lat: float | None = None,
+        min_lon: float | None = None,
+        max_lon: float | None = None,
+    ) -> tuple[ChlorophyllPoint, ...]:
+        bbox = self._resolve_bbox(min_lat=min_lat, max_lat=max_lat, min_lon=min_lon, max_lon=max_lon)
+        points = self._load_or_seed(trip_date.isoformat(), bbox)
+        self.last_cache_key = f"{trip_date.isoformat()}|{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}"
+        return points
+
+    @lru_cache(maxsize=256)
+    def get_zone_chlorophyll(
+        self,
+        zone_id: str,
+        latitude: float,
+        longitude: float,
+        trip_date: date,
+    ) -> ChlorophyllObservation:
+        bbox = self._default_bbox()
+        points = self._load_or_seed(trip_date.isoformat(), bbox)
+        return _build_observation_from_points(
+            zone_id=zone_id,
+            latitude=latitude,
+            longitude=longitude,
+            points=points,
+            source_label="cached real",
+            trip_date=trip_date,
+        )
+
+
+class CachingChlorophyllProvider:
+    def __init__(self, primary: ChlorophyllProvider, cache_adapter: CachedChlorophyllSnapshotAdapter):
+        self.primary = primary
+        self.cache_adapter = cache_adapter
+        self.source_name = getattr(primary, "source_name", "live")
+        self.last_source_name = self.source_name
+        self.configured_dataset_id = getattr(primary, "configured_dataset_id", getattr(primary, "dataset_id", None))
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
+        self.last_failure_reason = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
+
+    def _sync_from_primary(self) -> None:
+        self.last_source_name = getattr(self.primary, "last_source_name", getattr(self.primary, "source_name", "live"))
+        self.last_dataset_id = getattr(self.primary, "last_dataset_id", None)
+        self.last_cache_key = getattr(self.primary, "last_cache_key", "")
+        self.last_failure_reason = getattr(self.primary, "last_failure_reason", "")
+        self.last_resolved_timestamp = getattr(self.primary, "last_resolved_timestamp", "")
+        self.last_upstream_host = getattr(self.primary, "last_upstream_host", None)
+        self.last_attempted_urls = list(getattr(self.primary, "last_attempted_urls", []) or [])
+        self.last_provider_diagnostics = dict(getattr(self.primary, "last_provider_diagnostics", {}) or {})
+
+    def get_chlorophyll_points(
+        self,
+        trip_date: date,
+        *,
+        min_lat: float | None = None,
+        max_lat: float | None = None,
+        min_lon: float | None = None,
+        max_lon: float | None = None,
+    ) -> tuple[ChlorophyllPoint, ...]:
+        points = self.primary.get_chlorophyll_points(
+            trip_date,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+        )
+        self._sync_from_primary()
+        bbox = (
+            min_lat if min_lat is not None else getattr(self.primary, "min_lat"),
+            max_lat if max_lat is not None else getattr(self.primary, "max_lat"),
+            min_lon if min_lon is not None else getattr(self.primary, "min_lon"),
+            max_lon if max_lon is not None else getattr(self.primary, "max_lon"),
+        )
+        self.cache_adapter.store_snapshot(
+            requested_date=trip_date.isoformat(),
+            bbox=_normalize_bbox(min_lat=bbox[0], max_lat=bbox[1], min_lon=bbox[2], max_lon=bbox[3]),
+            points=points,
+            dataset_id=self.last_dataset_id,
+            resolved_timestamp=self.last_resolved_timestamp or trip_date.isoformat(),
+            upstream_host=self.last_upstream_host,
+            attempted_urls=self.last_attempted_urls,
+            provider_diagnostics=self.last_provider_diagnostics,
+            seed_source=self.last_source_name,
+        )
+        return points
+
+    def get_zone_chlorophyll(
+        self,
+        zone_id: str,
+        latitude: float,
+        longitude: float,
+        trip_date: date,
+    ) -> ChlorophyllObservation:
+        observation = self.primary.get_zone_chlorophyll(zone_id, latitude, longitude, trip_date)
+        self._sync_from_primary()
+        return observation
 
 
 class FallbackChlorophyllProvider:

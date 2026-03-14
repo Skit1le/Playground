@@ -201,6 +201,9 @@ export function buildLayerStatusMessage(layerLabel: string, metadata: LayerSourc
   if (metadata.failure_reason === "parse_error" || metadata.failure_reason === "empty_dataset") {
     return `Live ${layerLabel} returned no usable values for this request, so a fallback estimate is being used.`;
   }
+  if (metadata.source === "cached_real") {
+    return `Showing last-known-good real ${layerLabel} data while live ${layerLabel} feeds are unavailable.`;
+  }
   if (metadata.source === "processed") {
     return `Showing cached ${layerLabel} data while live ${layerLabel} is unavailable.`;
   }

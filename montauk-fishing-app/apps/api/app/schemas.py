@@ -268,6 +268,51 @@ class ChlorophyllBreakMapResponse(BaseModel):
     data: ChlorophyllBreakMapFeatureCollection
 
 
+class ChlorophyllCacheEntry(BaseModel):
+    requested_date: DateValue
+    resolved_timestamp: str | None = None
+    source: str
+    dataset_id: str | None = None
+    bbox: list[float]
+    cache_key: str
+    cache_path: str
+    cached_at: str | None = None
+    age_hours: float | None = None
+    upstream_host: str | None = None
+    attempted_urls: list[str] = Field(default_factory=list)
+    provider_diagnostics: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    point_count: int = 0
+
+
+class ChlorophyllCacheInspectionResponse(BaseModel):
+    cache_dir: str
+    entry_count: int
+    entries: list[ChlorophyllCacheEntry]
+
+
+class ChlorophyllCacheWarmResult(BaseModel):
+    requested_date: DateValue
+    bbox: list[float]
+    success: bool
+    source: str
+    dataset_id: str | None = None
+    cache_key: str | None = None
+    cache_path: str | None = None
+    resolved_timestamp: str | None = None
+    point_count: int = 0
+    failure_reason: str | None = None
+    warning_messages: list[str] = Field(default_factory=list)
+
+
+class ChlorophyllCacheWarmResponse(BaseModel):
+    requested_dates: list[DateValue]
+    bboxes: list[list[float]]
+    mode: Literal["live", "processed"] = "live"
+    warmed_count: int
+    failed_count: int
+    results: list[ChlorophyllCacheWarmResult]
+
+
 class TripOutcomeRecord(BaseModel):
     id: str
     date: DateValue

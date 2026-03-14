@@ -8,6 +8,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.chlorophyll_provider import (
+    CachedChlorophyllSnapshotAdapter,
+    CachingChlorophyllProvider,
     FallbackChlorophyllProvider,
     LiveCoastwatchChlorophyllAdapter,
     MockChlorophyllAdapter,
@@ -37,6 +39,7 @@ from app.fallback_repositories import InMemorySpeciesConfigRepository, InMemoryZ
 from app.repositories import SpeciesConfigRepository, ZoneRepository
 from app.repositories import HistoricalZoneScoreSnapshotRepository, TripOutcomeRepository
 from app.services.sst_map import SstMapService
+from app.services.chlorophyll_cache import ChlorophyllCacheService
 from app.services.chlorophyll_map import ChlorophyllBreakMapService
 from app.services.outcomes import HistoricalSnapshotService, OutcomeEvaluationService
 from app.services.trip_outcomes import TripOutcomeService
@@ -122,6 +125,53 @@ def get_live_chlorophyll_provider() -> LiveCoastwatchChlorophyllAdapter:
 
 
 @lru_cache
+def get_secondary_live_chlorophyll_provider() -> LiveCoastwatchChlorophyllAdapter | None:
+    settings = get_settings()
+    if not settings.secondary_live_chlorophyll_enabled:
+        return None
+    if not settings.secondary_live_chlorophyll_dataset_id.strip():
+        logger.warning("Secondary live chlorophyll enabled without a dataset id; skipping secondary provider.")
+        return None
+    return LiveCoastwatchChlorophyllAdapter(
+        dataset_id=settings.secondary_live_chlorophyll_dataset_id,
+        base_url=settings.secondary_live_chlorophyll_base_url,
+        variable_name=settings.secondary_live_chlorophyll_variable_name,
+        time_suffix=settings.secondary_live_chlorophyll_time_suffix,
+        extra_selectors=settings.secondary_live_chlorophyll_extra_selectors,
+        min_lat=settings.chlorophyll_bbox_min_lat,
+        max_lat=settings.chlorophyll_bbox_max_lat,
+        min_lon=settings.chlorophyll_bbox_min_lon,
+        max_lon=settings.chlorophyll_bbox_max_lon,
+        timeout_seconds=settings.secondary_live_chlorophyll_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_live_chlorophyll_provider_chain() -> LiveCoastwatchChlorophyllAdapter | FallbackChlorophyllProvider:
+    live_provider: LiveCoastwatchChlorophyllAdapter | FallbackChlorophyllProvider = get_live_chlorophyll_provider()
+    secondary_live_provider = get_secondary_live_chlorophyll_provider()
+    if secondary_live_provider is not None:
+        live_provider = FallbackChlorophyllProvider(
+            primary=live_provider,
+            fallback=secondary_live_provider,
+        )
+    return live_provider
+
+
+@lru_cache
+def get_cached_chlorophyll_provider() -> CachedChlorophyllSnapshotAdapter:
+    settings = get_settings()
+    return CachedChlorophyllSnapshotAdapter(
+        cache_dir=settings.chlorophyll_cache_dir,
+        min_lat=settings.chlorophyll_bbox_min_lat,
+        max_lat=settings.chlorophyll_bbox_max_lat,
+        min_lon=settings.chlorophyll_bbox_min_lon,
+        max_lon=settings.chlorophyll_bbox_max_lon,
+        seed_provider=get_processed_chlorophyll_provider(),
+    )
+
+
+@lru_cache
 def get_sst_provider() -> FallbackSstProvider:
     settings = get_settings()
     processed_sst_provider = get_processed_sst_provider()
@@ -167,17 +217,30 @@ def get_sst_provider() -> FallbackSstProvider:
 @lru_cache
 def get_chlorophyll_provider() -> FallbackChlorophyllProvider:
     settings = get_settings()
-    processed_provider = get_processed_chlorophyll_provider()
     mock_provider = MockChlorophyllAdapter(records=get_signal_store().records)
-    processed_fallback = FallbackChlorophyllProvider(
-        primary=processed_provider,
+    cache_provider = get_cached_chlorophyll_provider()
+    fallback_chain = FallbackChlorophyllProvider(
+        primary=cache_provider,
         fallback=mock_provider,
     )
     if not settings.live_chlorophyll_enabled:
-        return processed_fallback
+        return fallback_chain
+    live_provider = get_live_chlorophyll_provider_chain()
     return FallbackChlorophyllProvider(
-        primary=get_live_chlorophyll_provider(),
-        fallback=processed_fallback,
+        primary=CachingChlorophyllProvider(
+            primary=live_provider,
+            cache_adapter=cache_provider,
+        ),
+        fallback=fallback_chain,
+    )
+
+
+@lru_cache
+def get_chlorophyll_cache_service() -> ChlorophyllCacheService:
+    return ChlorophyllCacheService(
+        cache_adapter=get_cached_chlorophyll_provider(),
+        live_provider=get_live_chlorophyll_provider_chain(),
+        processed_provider=get_processed_chlorophyll_provider(),
     )
 
 
@@ -321,5 +384,6 @@ def get_historical_snapshot_service(session: DbSession) -> HistoricalSnapshotSer
 ZonesServiceDep = Annotated[ZonesService, Depends(get_zones_service)]
 SstMapServiceDep = Annotated[SstMapService, Depends(get_sst_map_service)]
 ChlorophyllBreakMapServiceDep = Annotated[ChlorophyllBreakMapService, Depends(get_chlorophyll_break_map_service)]
+ChlorophyllCacheServiceDep = Annotated[ChlorophyllCacheService, Depends(get_chlorophyll_cache_service)]
 TripOutcomeServiceDep = Annotated[TripOutcomeService, Depends(get_trip_outcome_service)]
 HistoricalSnapshotServiceDep = Annotated[HistoricalSnapshotService, Depends(get_historical_snapshot_service)]

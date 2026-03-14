@@ -485,8 +485,8 @@ def _build_zone_source_metadata(source_metadata: ZoneEnvironmentalSourceMetadata
 
 def _build_source_confidence_penalty(source_metadata: ZoneEnvironmentalSourceMetadata) -> float:
     penalty_by_source = {
-        "sst": {"processed": 3.0, "mock": 11.0, "mock_fallback": 14.0, "unavailable": 18.0},
-        "chlorophyll": {"processed": 4.0, "mock": 14.0, "mock_fallback": 18.0, "unavailable": 22.0},
+        "sst": {"processed": 3.0, "cached_real": 2.0, "mock": 11.0, "mock_fallback": 14.0, "unavailable": 18.0},
+        "chlorophyll": {"processed": 4.0, "cached_real": 2.5, "mock": 14.0, "mock_fallback": 18.0, "unavailable": 22.0},
         "current": {"processed": 1.5, "mock": 5.0, "mock_fallback": 7.0, "unavailable": 10.0},
         "bathymetry": {"processed": 0.0, "mock": 2.0, "mock_fallback": 4.0, "unavailable": 6.0},
         "weather": {"processed": 1.5, "mock": 4.0, "mock_fallback": 6.0, "unavailable": 8.0},
@@ -506,6 +506,10 @@ def _build_source_watchouts(source_metadata: ZoneEnvironmentalSourceMetadata) ->
         watchouts.append(
             "Chlorophyll is estimated for this request, so edge confidence is lower than when live satellite color is available."
         )
+    elif source_metadata.chlorophyll.source == "cached_real":
+        watchouts.append(
+            "Chlorophyll is coming from the last known good real feed, so the color edge may be slightly older than the latest live water."
+        )
     elif source_metadata.chlorophyll.source == "processed":
         watchouts.append(
             "Chlorophyll is coming from cached imagery for this request, so the color edge may lag the latest live water."
@@ -514,6 +518,8 @@ def _build_source_watchouts(source_metadata: ZoneEnvironmentalSourceMetadata) ->
         watchouts.append(
             "SST support is estimated for this request, so the exact break position may be softer than the score suggests."
         )
+    elif source_metadata.sst.source == "cached_real":
+        watchouts.append("SST is coming from the last known good real feed, so the exact break may lag the latest live water slightly.")
     elif source_metadata.sst.source == "processed":
         watchouts.append("SST is coming from cached processed water, not the freshest live grid.")
     if source_metadata.current.source in {"mock", "mock_fallback", "unavailable"}:

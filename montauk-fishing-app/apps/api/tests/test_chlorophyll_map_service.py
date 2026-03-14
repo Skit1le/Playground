@@ -105,6 +105,32 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
             "Showing a local chlorophyll estimate because the live satellite feed could not be reached from this machine.",
         )
 
+    def test_get_chlorophyll_break_map_surfaces_cached_real_metadata(self) -> None:
+        provider = FakeChlorophyllProvider(
+            (
+                ChlorophyllPoint(latitude=40.9, longitude=-71.9, chlorophyll_mg_m3=0.25),
+                ChlorophyllPoint(latitude=41.0, longitude=-71.8, chlorophyll_mg_m3=0.31),
+            )
+        )
+        provider.last_source_name = "cached_real"
+        provider.last_dataset_id = "cached-live-dataset"
+        provider.last_failure_reason = "network_blocked"
+        provider.last_provider_diagnostics = {"cache_kind": "last_known_good"}
+        service = ChlorophyllBreakMapService(provider, target_cells=36)
+
+        response = service.get_chlorophyll_break_map(
+            trip_date=date(2026, 6, 18),
+            bbox=(-72.2, 40.7, -71.4, 41.1),
+        )
+
+        self.assertEqual(response.metadata.source_status, "cached")
+        self.assertTrue(response.metadata.fallback_used)
+        self.assertEqual(response.metadata.dataset_id, "cached-live-dataset")
+        self.assertEqual(
+            response.metadata.warning_messages[0],
+            "Showing last-known-good real chlorophyll because live chlorophyll feeds are unavailable.",
+        )
+
     def test_get_chlorophyll_break_map_uses_request_date_and_bbox(self) -> None:
         provider = FakeChlorophyllProvider(
             (

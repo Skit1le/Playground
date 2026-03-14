@@ -1,9 +1,13 @@
 import unittest
 from datetime import date
 import socket
+import tempfile
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 
 from app.chlorophyll_provider import (
+    CachedChlorophyllSnapshotAdapter,
+    CachingChlorophyllProvider,
     ChlorophyllDataUnavailableError,
     ChlorophyllObservation,
     ChlorophyllPoint,
@@ -12,6 +16,9 @@ from app.chlorophyll_provider import (
     MockChlorophyllAdapter,
     ProcessedCoastwatchChlorophyllAdapter,
 )
+
+TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".tmp"
+TEST_TEMP_ROOT.mkdir(exist_ok=True)
 
 
 class FakeProcessedProductLoader:
@@ -636,6 +643,166 @@ class FallbackChlorophyllProviderTestCase(unittest.TestCase):
             adapter.get_chlorophyll_points(date(2026, 6, 18))
 
         self.assertEqual(adapter.last_failure_reason, "connection_error")
+
+
+class CachedChlorophyllSnapshotAdapterTestCase(unittest.TestCase):
+    def test_reads_exact_cached_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temp_dir:
+            adapter = CachedChlorophyllSnapshotAdapter(
+                cache_dir=temp_dir,
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+            )
+            points = (
+                ChlorophyllPoint(latitude=40.95, longitude=-71.88, chlorophyll_mg_m3=0.26),
+                ChlorophyllPoint(latitude=40.92, longitude=-71.82, chlorophyll_mg_m3=0.31),
+            )
+            adapter.store_snapshot(
+                requested_date="2026-06-18",
+                bbox=(39.8, 41.4, -72.4, -69.8),
+                points=points,
+                dataset_id="live-dataset",
+                resolved_timestamp="2026-06-18T12:00:00Z",
+                upstream_host="coastwatch.pfeg.noaa.gov",
+                attempted_urls=["https://coastwatch.pfeg.noaa.gov/example.csv"],
+                provider_diagnostics={"attempt_number": 1},
+                seed_source="live",
+            )
+
+            cached_points = adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+            self.assertEqual(cached_points, points)
+            self.assertEqual(adapter.last_dataset_id, "live-dataset")
+            self.assertEqual(adapter.last_provider_diagnostics["cache_kind"], "last_known_good")
+
+    def test_falls_back_to_latest_cached_snapshot_for_newer_date(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temp_dir:
+            adapter = CachedChlorophyllSnapshotAdapter(
+                cache_dir=temp_dir,
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+            )
+            points = (ChlorophyllPoint(latitude=40.95, longitude=-71.88, chlorophyll_mg_m3=0.26),)
+            adapter.store_snapshot(
+                requested_date="2026-06-18",
+                bbox=(39.8, 41.4, -72.4, -69.8),
+                points=points,
+                dataset_id="live-dataset",
+                resolved_timestamp="2026-06-18T12:00:00Z",
+                upstream_host="coastwatch.pfeg.noaa.gov",
+                attempted_urls=[],
+                provider_diagnostics={},
+                seed_source="live",
+            )
+
+            cached_points = adapter.get_chlorophyll_points(date(2026, 6, 19))
+
+            self.assertEqual(cached_points, points)
+            self.assertEqual(adapter.last_dataset_id, "live-dataset")
+            self.assertEqual(adapter.last_provider_diagnostics["cache_kind"], "last_known_good")
+
+    def test_seeds_cache_from_processed_provider_when_empty(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temp_dir:
+            seed_provider = ProcessedCoastwatchChlorophyllAdapter(
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+                load_product=FakeProcessedProductLoader(make_payload()),
+            )
+            adapter = CachedChlorophyllSnapshotAdapter(
+                cache_dir=temp_dir,
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+                seed_provider=seed_provider,
+            )
+
+            cached_points = adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+            self.assertGreaterEqual(len(cached_points), 1)
+            self.assertEqual(adapter.last_provider_diagnostics["cache_kind"], "seeded_from_processed")
+            self.assertTrue(any(Path(temp_dir).rglob("*.json")))
+
+
+class CachingChlorophyllProviderTestCase(unittest.TestCase):
+    def test_stores_last_known_good_snapshot_after_live_success(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temp_dir:
+            url_open = FakeUrlOpen(
+                "\n".join(
+                    [
+                        "time,latitude,longitude,chlor_a",
+                        "2026-06-18T12:00:00Z,40.95,-71.88,0.26",
+                        "2026-06-18T12:00:00Z,40.92,-71.82,0.31",
+                    ]
+                )
+            )
+            live_provider = LiveCoastwatchChlorophyllAdapter(
+                dataset_id="nesdisVHNchlaDaily",
+                base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+                open_url=url_open,
+            )
+            cache_adapter = CachedChlorophyllSnapshotAdapter(
+                cache_dir=temp_dir,
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+            )
+            provider = CachingChlorophyllProvider(primary=live_provider, cache_adapter=cache_adapter)
+
+            points = provider.get_chlorophyll_points(date(2026, 6, 18))
+
+            self.assertEqual(len(points), 2)
+            cached_points = cache_adapter.get_chlorophyll_points(date(2026, 6, 18))
+            self.assertEqual(cached_points, points)
+
+    def test_provider_chain_prefers_cached_real_before_mock(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temp_dir:
+            cache_adapter = CachedChlorophyllSnapshotAdapter(
+                cache_dir=temp_dir,
+                min_lat=39.8,
+                max_lat=41.4,
+                min_lon=-72.4,
+                max_lon=-69.8,
+            )
+            cache_adapter.store_snapshot(
+                requested_date="2026-06-18",
+                bbox=(39.8, 41.4, -72.4, -69.8),
+                points=(ChlorophyllPoint(latitude=40.95, longitude=-71.88, chlorophyll_mg_m3=0.26),),
+                dataset_id="cached-dataset",
+                resolved_timestamp="2026-06-18T12:00:00Z",
+                upstream_host="coastwatch.pfeg.noaa.gov",
+                attempted_urls=["https://coastwatch.pfeg.noaa.gov/example.csv"],
+                provider_diagnostics={},
+                seed_source="live",
+            )
+            provider = FallbackChlorophyllProvider(
+                primary=FakeChlorophyllProvider(
+                    observation=ChlorophyllDataUnavailableError("network_blocked"),
+                    points=ChlorophyllDataUnavailableError("network_blocked"),
+                    source_name="live",
+                ),
+                fallback=FallbackChlorophyllProvider(
+                    primary=cache_adapter,
+                    fallback=MockChlorophyllAdapter(),
+                ),
+            )
+
+            points = provider.get_chlorophyll_points(date(2026, 6, 18))
+
+            self.assertEqual(len(points), 1)
+            self.assertEqual(provider.last_source_name, "cached_real")
+            self.assertEqual(provider.last_failure_reason, "network_blocked")
 
 
 if __name__ == "__main__":
