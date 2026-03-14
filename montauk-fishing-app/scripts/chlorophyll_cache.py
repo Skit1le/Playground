@@ -14,6 +14,10 @@ from app.api.routes.admin import _parse_bbox, _parse_dates  # noqa: E402
 from app.api.deps import get_chlorophyll_cache_service  # noqa: E402
 from app.services.chlorophyll_cache import ChlorophyllCacheWarmRequest  # noqa: E402
 
+PRESET_BBOXES = {
+    "montauk": ("-72.28,40.62,-71.02,41.18",),
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Warm or inspect cached chlorophyll snapshots.")
@@ -26,8 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     warm_parser.add_argument(
         "--bbox",
         action="append",
-        required=True,
+        default=[],
         help="Repeat minLng,minLat,maxLng,maxLat to warm multiple areas.",
+    )
+    warm_parser.add_argument(
+        "--preset",
+        choices=tuple(sorted(PRESET_BBOXES)),
+        default=None,
+        help="Use a named bbox preset instead of manually providing --bbox values.",
     )
     warm_parser.add_argument("--mode", choices=("live", "processed"), default="live")
 
@@ -38,7 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
 def run_warm(args: argparse.Namespace) -> int:
     service = get_chlorophyll_cache_service()
     requested_dates = _parse_dates(args.date, args.date_from, args.date_to)
-    parsed_bboxes = tuple(_parse_bbox(value) for value in args.bbox)
+    bbox_inputs = list(args.bbox)
+    if args.preset:
+        bbox_inputs.extend(PRESET_BBOXES[args.preset])
+    if not bbox_inputs:
+        raise SystemExit("Provide at least one --bbox or use --preset montauk.")
+    parsed_bboxes = tuple(_parse_bbox(value) for value in bbox_inputs)
     response = service.warm_cache(
         ChlorophyllCacheWarmRequest(
             requested_dates=tuple(requested_dates),
