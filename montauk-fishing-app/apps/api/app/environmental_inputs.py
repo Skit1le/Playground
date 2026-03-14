@@ -57,18 +57,110 @@ class ZoneEnvironmentalSignals:
 
 
 @dataclass(frozen=True)
+class ZoneSignalSourceMetadata:
+    source: str
+    provider_name: str | None = None
+    dataset_id: str | None = None
+    resolved_timestamp: str | None = None
+    failure_reason: str | None = None
+    upstream_host: str | None = None
+    attempted_urls: tuple[str, ...] = ()
+    provider_diagnostics: dict[str, str | int | float | bool | None] | None = None
+    warning_messages: tuple[str, ...] = ()
+
+    @property
+    def source_status(self) -> str:
+        if self.source == "live":
+            return "live"
+        if self.source == "processed":
+            return "cached"
+        if self.source == "mock":
+            return "seed"
+        if self.source == "unavailable":
+            return "unavailable"
+        if self.source == "unknown":
+            return "unknown"
+        return "fallback"
+
+    @property
+    def live_data_available(self) -> bool:
+        return self.source == "live"
+
+    @property
+    def fallback_used(self) -> bool:
+        return self.source in {"processed", "mock", "mock_fallback"}
+
+
+@dataclass(frozen=True)
 class ZoneEnvironmentalSourceMetadata:
-    sst_source: str
-    chlorophyll_source: str
-    current_source: str
-    bathymetry_source: str
-    weather_source: str
+    sst: ZoneSignalSourceMetadata
+    chlorophyll: ZoneSignalSourceMetadata
+    current: ZoneSignalSourceMetadata
+    bathymetry: ZoneSignalSourceMetadata
+    weather: ZoneSignalSourceMetadata
+
+    @property
+    def sst_source(self) -> str:
+        return self.sst.source
+
+    @property
+    def chlorophyll_source(self) -> str:
+        return self.chlorophyll.source
+
+    @property
+    def current_source(self) -> str:
+        return self.current.source
+
+    @property
+    def bathymetry_source(self) -> str:
+        return self.bathymetry.source
+
+    @property
+    def weather_source(self) -> str:
+        return self.weather.source
 
 
 @dataclass(frozen=True)
 class ResolvedZoneEnvironmentalInputs:
     signals: ZoneEnvironmentalSignals
     metadata: ZoneEnvironmentalSourceMetadata
+
+
+def _build_source_warning_messages(*, label: str, source_name: str, failure_reason: str | None) -> tuple[str, ...]:
+    if source_name == "processed":
+        return (f"Using cached {label} data instead of a live {label} feed for this request.",)
+    if source_name == "mock":
+        return (f"Using seeded {label} reference data for this request.",)
+    if source_name == "mock_fallback":
+        if failure_reason:
+            return (f"Using estimated {label} data because the higher-priority source was unavailable ({failure_reason}).",)
+        return (f"Using estimated {label} data because the higher-priority source was unavailable.",)
+    if source_name == "unavailable":
+        if failure_reason:
+            return (f"{label.capitalize()} data is unavailable for this request ({failure_reason}).",)
+        return (f"{label.capitalize()} data is unavailable for this request.",)
+    return ()
+
+
+def _build_signal_source_metadata(source: object, *, label: str) -> ZoneSignalSourceMetadata:
+    source_name = getattr(source, "last_source_name", getattr(source, "source_name", "unknown"))
+    failure_reason = getattr(source, "last_failure_reason", None)
+    resolved_timestamp = getattr(source, "last_resolved_timestamp", None)
+    return ZoneSignalSourceMetadata(
+        source=source_name,
+        provider_name=type(source).__name__,
+        dataset_id=getattr(source, "last_dataset_id", None),
+        resolved_timestamp=resolved_timestamp,
+        failure_reason=failure_reason,
+        upstream_host=getattr(source, "last_upstream_host", None),
+        attempted_urls=tuple(getattr(source, "last_attempted_urls", []) or ()),
+        provider_diagnostics=getattr(source, "last_provider_diagnostics", {}) or {},
+        warning_messages=_build_source_warning_messages(
+            label=label,
+            source_name=source_name,
+            failure_reason=failure_reason,
+        ),
+    )
 
 
 class TemperatureSource(Protocol):
@@ -161,6 +253,11 @@ class SstBackedTemperatureSource:
         self.last_source_name = self.source_name
         self.last_dataset_id: str | None = None
         self.last_cache_key = ""
+        self.last_failure_reason = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         sst = self.sst_provider.get_zone_sst(
@@ -176,6 +273,11 @@ class SstBackedTemperatureSource:
         )
         self.last_dataset_id = getattr(self.sst_provider, "last_dataset_id", None)
         self.last_cache_key = getattr(self.sst_provider, "last_cache_key", "")
+        self.last_failure_reason = getattr(self.sst_provider, "last_failure_reason", "")
+        self.last_resolved_timestamp = getattr(self.sst_provider, "last_resolved_timestamp", "")
+        self.last_upstream_host = getattr(self.sst_provider, "last_upstream_host", None)
+        self.last_attempted_urls = list(getattr(self.sst_provider, "last_attempted_urls", []) or [])
+        self.last_provider_diagnostics = dict(getattr(self.sst_provider, "last_provider_diagnostics", {}) or {})
         return TemperatureSignals(
             sea_surface_temp_f=sst.sea_surface_temp_f,
             temp_gradient_f_per_nm=sst.temp_gradient_f_per_nm,
@@ -188,6 +290,13 @@ class FallbackTemperatureSource:
         self.fallback = fallback
         self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
+        self.last_failure_reason = ""
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def get_temperature(self, zone: ZoneModel, trip_date: date) -> TemperatureSignals:
         try:
@@ -200,6 +309,13 @@ class FallbackTemperatureSource:
                 "last_source_name",
                 getattr(self.primary, "source_name", "processed"),
             )
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "")
+            self.last_dataset_id = getattr(self.primary, "last_dataset_id", None)
+            self.last_cache_key = getattr(self.primary, "last_cache_key", "")
+            self.last_resolved_timestamp = getattr(self.primary, "last_resolved_timestamp", "")
+            self.last_upstream_host = getattr(self.primary, "last_upstream_host", None)
+            self.last_attempted_urls = list(getattr(self.primary, "last_attempted_urls", []) or [])
+            self.last_provider_diagnostics = dict(getattr(self.primary, "last_provider_diagnostics", {}) or {})
             return temperature
         except TimeoutError:
             logger.warning(
@@ -213,6 +329,7 @@ class FallbackTemperatureSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "timeout"
             return temperature
         except SstDataUnavailableError:
             logger.warning(
@@ -226,6 +343,7 @@ class FallbackTemperatureSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "unavailable"
             return temperature
         except Exception:
             logger.exception(
@@ -239,6 +357,7 @@ class FallbackTemperatureSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = self._resolve_fallback_source_name()
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "provider_error"
             return temperature
 
     def _resolve_fallback_source_name(self) -> str:
@@ -353,6 +472,11 @@ class ChlorophyllBackedSource:
         self.last_source_name = self.source_name
         self.last_dataset_id: str | None = None
         self.last_cache_key = ""
+        self.last_failure_reason = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
         observation = self.chlorophyll_provider.get_zone_chlorophyll(
@@ -368,6 +492,11 @@ class ChlorophyllBackedSource:
         )
         self.last_dataset_id = getattr(self.chlorophyll_provider, "last_dataset_id", None)
         self.last_cache_key = getattr(self.chlorophyll_provider, "last_cache_key", "")
+        self.last_failure_reason = getattr(self.chlorophyll_provider, "last_failure_reason", "")
+        self.last_resolved_timestamp = getattr(self.chlorophyll_provider, "last_resolved_timestamp", "")
+        self.last_upstream_host = getattr(self.chlorophyll_provider, "last_upstream_host", None)
+        self.last_attempted_urls = list(getattr(self.chlorophyll_provider, "last_attempted_urls", []) or [])
+        self.last_provider_diagnostics = dict(getattr(self.chlorophyll_provider, "last_provider_diagnostics", {}) or {})
         return ChlorophyllSignals(chlorophyll_mg_m3=observation.chlorophyll_mg_m3)
 
 
@@ -377,6 +506,13 @@ class FallbackChlorophyllSource:
         self.fallback = fallback
         self.timeout_seconds = timeout_seconds
         self.last_source_name = "mock_fallback"
+        self.last_failure_reason = ""
+        self.last_dataset_id: str | None = None
+        self.last_cache_key = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host: str | None = None
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def get_chlorophyll(self, zone: ZoneModel, trip_date: date) -> ChlorophyllSignals:
         try:
@@ -389,6 +525,13 @@ class FallbackChlorophyllSource:
                 "last_source_name",
                 getattr(self.primary, "source_name", "processed"),
             )
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "")
+            self.last_dataset_id = getattr(self.primary, "last_dataset_id", None)
+            self.last_cache_key = getattr(self.primary, "last_cache_key", "")
+            self.last_resolved_timestamp = getattr(self.primary, "last_resolved_timestamp", "")
+            self.last_upstream_host = getattr(self.primary, "last_upstream_host", None)
+            self.last_attempted_urls = list(getattr(self.primary, "last_attempted_urls", []) or [])
+            self.last_provider_diagnostics = dict(getattr(self.primary, "last_provider_diagnostics", {}) or {})
             return chlorophyll
         except TimeoutError:
             logger.warning(
@@ -402,6 +545,7 @@ class FallbackChlorophyllSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = "mock_fallback"
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "timeout"
             return chlorophyll
         except ChlorophyllDataUnavailableError:
             logger.warning(
@@ -415,6 +559,7 @@ class FallbackChlorophyllSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = "mock_fallback"
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "unavailable"
             return chlorophyll
         except Exception:
             logger.exception(
@@ -428,6 +573,7 @@ class FallbackChlorophyllSource:
                 self.last_source_name = "unavailable"
                 raise
             self.last_source_name = "mock_fallback"
+            self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or "provider_error"
             return chlorophyll
 
 
@@ -656,31 +802,11 @@ class ZoneEnvironmentalInputService:
         total_elapsed_ms = round((perf_counter() - started_at) * 1000, 1)
 
         metadata = ZoneEnvironmentalSourceMetadata(
-            sst_source=getattr(
-                self.temperature_source,
-                "last_source_name",
-                getattr(self.temperature_source, "source_name", "unknown"),
-            ),
-            chlorophyll_source=getattr(
-                self.chlorophyll_source,
-                "last_source_name",
-                getattr(self.chlorophyll_source, "source_name", "unknown"),
-            ),
-            current_source=getattr(
-                self.current_source,
-                "last_source_name",
-                getattr(self.current_source, "source_name", "unknown"),
-            ),
-            bathymetry_source=getattr(
-                self.bathymetry_source,
-                "last_source_name",
-                getattr(self.bathymetry_source, "source_name", "unknown"),
-            ),
-            weather_source=getattr(
-                self.weather_source,
-                "last_source_name",
-                getattr(self.weather_source, "source_name", "unknown"),
-            ),
+            sst=_build_signal_source_metadata(self.temperature_source, label="sst"),
+            chlorophyll=_build_signal_source_metadata(self.chlorophyll_source, label="chlorophyll"),
+            current=_build_signal_source_metadata(self.current_source, label="current"),
+            bathymetry=_build_signal_source_metadata(self.bathymetry_source, label="bathymetry"),
+            weather=_build_signal_source_metadata(self.weather_source, label="weather"),
         )
 
         logger.info(

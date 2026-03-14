@@ -12,6 +12,10 @@ class FakeChlorophyllProvider:
         self.last_dataset_id = "chlorophyll-test"
         self.last_cache_key = "2026-06-18|-72.4,39.8,-69.8,41.4"
         self.last_failure_reason = ""
+        self.last_resolved_timestamp = "2026-06-18T12:00:00Z"
+        self.last_upstream_host = "coastwatch.pfeg.noaa.gov"
+        self.last_attempted_urls = ["https://coastwatch.pfeg.noaa.gov/example.csv"]
+        self.last_provider_diagnostics = {"attempt_number": 1}
         self.calls: list[tuple[date, float | None, float | None, float | None, float | None]] = []
 
     def get_chlorophyll_points(
@@ -50,6 +54,9 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         self.assertEqual(response.metadata.source_status, "live")
         self.assertFalse(response.metadata.fallback_used)
         self.assertEqual(response.metadata.dataset_id, "chlorophyll-test")
+        self.assertEqual(response.metadata.resolved_data_timestamp, "2026-06-18T12:00:00Z")
+        self.assertEqual(response.metadata.upstream_host, "coastwatch.pfeg.noaa.gov")
+        self.assertEqual(response.metadata.attempted_urls[0], "https://coastwatch.pfeg.noaa.gov/example.csv")
         self.assertGreater(response.metadata.point_count, 0)
         self.assertGreater(response.metadata.cell_count, 0)
         self.assertIsNotNone(response.metadata.break_intensity_range_mg_m3_per_nm)
@@ -91,7 +98,12 @@ class ChlorophyllBreakMapServiceTestCase(unittest.TestCase):
         self.assertEqual(response.metadata.source_status, "fallback")
         self.assertTrue(response.metadata.fallback_used)
         self.assertEqual(response.metadata.failure_reason, "timeout")
+        self.assertEqual(response.metadata.upstream_host, "coastwatch.pfeg.noaa.gov")
         self.assertGreater(len(response.metadata.warning_messages), 0)
+        self.assertEqual(
+            response.metadata.warning_messages[0],
+            "Showing a local chlorophyll estimate because the live satellite feed could not be reached from this machine.",
+        )
 
     def test_get_chlorophyll_break_map_uses_request_date_and_bbox(self) -> None:
         provider = FakeChlorophyllProvider(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   areBboxesEquivalent,
+  clampBboxToBounds,
   buildApiTimeoutMessage,
   buildApiUnavailableMessage,
   buildLayerStatusMessage,
@@ -24,6 +25,12 @@ function runDashboardUtilsAssertions(): void {
 
   const changedRight: MapBbox = [-72.18, 40.62, -70.92, 41.18];
   assert.equal(areBboxesEquivalent(stableLeft, changedRight), false);
+
+  const expandedBbox: MapBbox = [-74.1961, 25.0147, -67.296, 42.3205];
+  assert.deepEqual(clampBboxToBounds(expandedBbox, stableLeft), stableLeft);
+
+  const partiallyShiftedBbox: MapBbox = [-72.15, 40.7, -70.5, 41.3];
+  assert.deepEqual(clampBboxToBounds(partiallyShiftedBbox, stableLeft), [-72.15, 40.7, -71.02, 41.18]);
 
   const explanation = normalizeZoneExplanation(
     {
@@ -61,16 +68,17 @@ function runDashboardUtilsAssertions(): void {
   assert.equal(
     buildLayerStatusMessage("SST", {
       source: "processed",
-      warning_messages: ["Live SST unavailable; using processed SST data."],
+      warning_messages: ["Showing cached SST data while live SST is unavailable."],
     }),
-    "Live SST unavailable; using processed SST data.",
+    "Showing cached SST data while live SST is unavailable.",
   );
   assert.equal(
     buildLayerStatusMessage("chlorophyll", {
       source: "mock_fallback",
-      failure_reason: "timeout",
+      failure_reason: "network_blocked",
+      upstream_host: "coastwatch.pfeg.noaa.gov",
     }),
-    "Live chlorophyll unavailable; using seeded fallback chlorophyll data.",
+    "Live chlorophyll is blocked from reaching coastwatch.pfeg.noaa.gov in this environment, so a fallback estimate is being used.",
   );
   assert.equal(
     buildApiTimeoutMessage("/map/sst?date=2026-03-11", 5000, "http://127.0.0.1:8000"),

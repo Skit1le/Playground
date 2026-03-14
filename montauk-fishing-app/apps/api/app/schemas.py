@@ -98,6 +98,32 @@ class SpeciesConfig(BaseModel):
     weights: WeightedScoreConfig
 
 
+class SignalSourceMetadata(BaseModel):
+    source: str
+    source_status: str = "unavailable"
+    live_data_available: bool = False
+    fallback_used: bool = False
+    provider_name: str | None = None
+    dataset_id: str | None = None
+    resolved_timestamp: str | None = None
+    failure_reason: str | None = None
+    upstream_host: str | None = None
+    attempted_urls: list[str] = Field(default_factory=list)
+    provider_diagnostics: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    warning_messages: list[str] = Field(default_factory=list)
+
+
+class ZoneSourceMetadata(BaseModel):
+    sst: SignalSourceMetadata
+    chlorophyll: SignalSourceMetadata
+    current: SignalSourceMetadata
+    bathymetry: SignalSourceMetadata
+    weather: SignalSourceMetadata
+    live_data_available: bool = False
+    fallback_used: bool = False
+    warning_messages: list[str] = Field(default_factory=list)
+
+
 class RankedZone(BaseModel):
     id: str
     name: str
@@ -120,6 +146,7 @@ class RankedZone(BaseModel):
     score_weights: WeightedScoreConfig
     weighted_score_breakdown: WeightedScoreBreakdown
     score_explanation: ZoneScoreExplanation
+    source_metadata: ZoneSourceMetadata
     scored_for_species: str
     scored_for_date: DateValue
 
@@ -169,7 +196,11 @@ class SstMapMetadata(BaseModel):
     fallback_used: bool = False
     provider_name: str | None = None
     dataset_id: str | None = None
+    upstream_host: str | None = None
+    attempted_urls: list[str] = Field(default_factory=list)
+    provider_diagnostics: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     requested_date: DateValue | None = None
+    resolved_timestamp: str | None = None
     resolved_data_timestamp: str | None = None
     units: Literal["fahrenheit"] = "fahrenheit"
     point_count: int
@@ -216,7 +247,11 @@ class ChlorophyllBreakMapMetadata(BaseModel):
     fallback_used: bool = False
     provider_name: str | None = None
     dataset_id: str | None = None
+    upstream_host: str | None = None
+    attempted_urls: list[str] = Field(default_factory=list)
+    provider_diagnostics: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     requested_date: DateValue | None = None
+    resolved_timestamp: str | None = None
     resolved_data_timestamp: str | None = None
     units: Literal["mg_m3"] = "mg_m3"
     point_count: int

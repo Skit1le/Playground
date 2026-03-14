@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import {
-  areBboxesEquivalent,
   buildApiTimeoutMessage,
   buildApiUnavailableMessage,
   buildLayerStatusMessage,
@@ -57,6 +56,50 @@ type Zone = {
       weighted_contribution: number;
       reason: string;
     }>;
+  };
+  source_metadata?: {
+    sst: {
+      source: string;
+      source_status: string;
+      live_data_available: boolean;
+      fallback_used: boolean;
+      dataset_id?: string | null;
+      failure_reason?: string | null;
+      warning_messages?: string[] | null;
+    };
+    chlorophyll: {
+      source: string;
+      source_status: string;
+      live_data_available: boolean;
+      fallback_used: boolean;
+      dataset_id?: string | null;
+      failure_reason?: string | null;
+      warning_messages?: string[] | null;
+    };
+    current: {
+      source: string;
+      source_status: string;
+      live_data_available: boolean;
+      fallback_used: boolean;
+      warning_messages?: string[] | null;
+    };
+    bathymetry: {
+      source: string;
+      source_status: string;
+      live_data_available: boolean;
+      fallback_used: boolean;
+      warning_messages?: string[] | null;
+    };
+    weather: {
+      source: string;
+      source_status: string;
+      live_data_available: boolean;
+      fallback_used: boolean;
+      warning_messages?: string[] | null;
+    };
+    live_data_available: boolean;
+    fallback_used: boolean;
+    warning_messages?: string[] | null;
   };
   depth_ft: number;
   summary: string;
@@ -337,7 +380,6 @@ export default function HomeDashboard() {
   const [sstMapData, setSstMapData] = useState<SstMapResponse | null>(null);
   const [chlorophyllBreakMapData, setChlorophyllBreakMapData] = useState<ChlorophyllBreakMapResponse | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
-  const [viewportBbox, setViewportBbox] = useState<MapBbox>(DEFAULT_MAP_BBOX);
 
   const [isZonesLoading, setIsZonesLoading] = useState(true);
   const [isSstMapLoading, setIsSstMapLoading] = useState(true);
@@ -349,7 +391,8 @@ export default function HomeDashboard() {
   const [reloadToken, setReloadToken] = useState(0);
 
   const apiDate = toApiDate(selectedDate);
-  const bboxParam = useMemo(() => formatBboxParam(viewportBbox), [viewportBbox]);
+  const mapRequestBbox = DEFAULT_MAP_BBOX;
+  const bboxParam = useMemo(() => formatBboxParam(mapRequestBbox), [mapRequestBbox]);
   const requestBbox = useMemo(() => bboxParam.split(",").map((value) => Number(value)) as MapBbox, [bboxParam]);
   const zonesRequestKey = useMemo(() => `zones:${apiDate}:${selectedSpecies}`, [apiDate, selectedSpecies]);
   const sstRequestKey = useMemo(() => `sst:${apiDate}:${bboxParam}`, [apiDate, bboxParam]);
@@ -361,10 +404,6 @@ export default function HomeDashboard() {
     clearRequestFailure(chlorophyllRequestKey);
     setReloadToken((current) => current + 1);
   }, [chlorophyllRequestKey, sstRequestKey, zonesRequestKey]);
-
-  const handleViewportBboxChange = useCallback((nextBbox: MapBbox) => {
-    setViewportBbox((currentBbox) => (areBboxesEquivalent(currentBbox, nextBbox) ? currentBbox : nextBbox));
-  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -573,6 +612,7 @@ export default function HomeDashboard() {
   const selectedZoneExplanation = selectedZone
     ? normalizeZoneExplanation(selectedZone.score_explanation, selectedZone)
     : null;
+  const selectedZoneSourceWarnings = selectedZone?.source_metadata?.warning_messages ?? [];
   const sourceWarnings = useMemo(() => {
     const warnings = [
       buildLayerStatusMessage("SST", sstMapData?.metadata),
@@ -685,7 +725,6 @@ export default function HomeDashboard() {
           isSstMapLoading={isSstMapLoading}
           isZonesLoading={isZonesLoading}
           onZoneSelect={setSelectedZoneId}
-          onViewportBboxChange={handleViewportBboxChange}
           selectedZoneId={selectedZoneId}
           sstMapData={sstMapData}
           sstMapError={sstMapError}
@@ -767,7 +806,7 @@ export default function HomeDashboard() {
               <div className={styles.featuredStats}>
                 <div className={styles.stat}>
                   <p className={styles.statLabel}>Confidence</p>
-                  <p className={styles.statValue}>{topZone.score}</p>
+                  <p className={styles.statValue}>{topZone.score_explanation?.confidence_score?.toFixed(1) ?? "--"}</p>
                 </div>
                 <div className={styles.stat}>
                   <p className={styles.statLabel}>SST</p>
@@ -836,6 +875,18 @@ export default function HomeDashboard() {
                         <h4 className={styles.listTitle}>Watchout</h4>
                       </div>
                       <p className={styles.listText}>{watchout}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {selectedZoneSourceWarnings.length > 0 && (
+                <div className={styles.list}>
+                  {selectedZoneSourceWarnings.map((warning) => (
+                    <div className={styles.listItem} key={warning}>
+                      <div className={styles.listTitleRow}>
+                        <h4 className={styles.listTitle}>Data Source Note</h4>
+                      </div>
+                      <p className={styles.listText}>{warning}</p>
                     </div>
                   ))}
                 </div>

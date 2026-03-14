@@ -7,6 +7,7 @@ from app.db_models import SpeciesScoringConfigModel, ZoneModel
 from app.environmental_inputs import (
     EnvironmentalInputProvider,
     ResolvedZoneEnvironmentalInputs,
+    ZoneSignalSourceMetadata,
     ZoneEnvironmentalInputService,
     ZoneEnvironmentalSignals,
     ZoneEnvironmentalSourceMetadata,
@@ -19,7 +20,15 @@ from app.scoring import (
     build_temp_break_config,
     build_weighted_score_config,
 )
-from app.schemas import RankedZone, ScoreExplanationFactor, SpeciesConfig, ZoneCenter, ZoneScoreExplanation
+from app.schemas import (
+    RankedZone,
+    ScoreExplanationFactor,
+    SignalSourceMetadata,
+    SpeciesConfig,
+    ZoneCenter,
+    ZoneScoreExplanation,
+    ZoneSourceMetadata,
+)
 from app.services.chlorophyll_edges import (
     build_chlorophyll_cell_signals,
     nearest_strong_chlorophyll_break_distance_nm,
@@ -132,7 +141,7 @@ class ZonesService:
                 "weather_source": resolved_inputs.metadata.weather_source,
             },
         )
-        return build_ranked_zone(zone, signals, species, trip_date, score_result)
+        return build_ranked_zone(zone, signals, species, trip_date, score_result, resolved_inputs.metadata)
 
     def _resolve_zone_inputs(self, zone: ZoneModel, trip_date: date) -> ResolvedZoneEnvironmentalInputs:
         if hasattr(self.environmental_input_provider, "resolve_zone_inputs"):
@@ -140,11 +149,11 @@ class ZonesService:
         return ResolvedZoneEnvironmentalInputs(
             signals=self.environmental_input_provider.get_zone_signals(zone, trip_date),
             metadata=ZoneEnvironmentalSourceMetadata(
-                sst_source="unknown",
-                chlorophyll_source="unknown",
-                current_source="unknown",
-                bathymetry_source="unknown",
-                weather_source="unknown",
+                sst=ZoneSignalSourceMetadata(source="unknown"),
+                chlorophyll=ZoneSignalSourceMetadata(source="unknown"),
+                current=ZoneSignalSourceMetadata(source="unknown"),
+                bathymetry=ZoneSignalSourceMetadata(source="unknown"),
+                weather=ZoneSignalSourceMetadata(source="unknown"),
             ),
         )
 
@@ -287,6 +296,7 @@ def build_ranked_zone(
     species: str,
     trip_date: date,
     score_result: ScoreResult,
+    source_metadata: ZoneEnvironmentalSourceMetadata,
 ) -> RankedZone:
     return RankedZone(
         id=zone.id,
@@ -309,7 +319,8 @@ def build_ranked_zone(
         score_breakdown=score_result.breakdown,
         score_weights=score_result.weights,
         weighted_score_breakdown=score_result.weighted_breakdown,
-        score_explanation=build_zone_score_explanation(zone, signals, species, score_result),
+        score_explanation=build_zone_score_explanation(zone, signals, species, score_result, source_metadata),
+        source_metadata=_build_zone_source_metadata(source_metadata),
         scored_for_species=species,
         scored_for_date=trip_date,
     )
@@ -335,6 +346,7 @@ def build_zone_score_explanation(
     signals: ZoneEnvironmentalSignals,
     species: str,
     score_result: ScoreResult,
+    source_metadata: ZoneEnvironmentalSourceMetadata,
 ) -> ZoneScoreExplanation:
     factors = [
         ScoreExplanationFactor(
@@ -416,8 +428,8 @@ def build_zone_score_explanation(
             f"chlorophyll break {_format_distance(signals.nearest_strong_chl_break_distance_nm)}."
         ),
         best_use_case_summary=_build_best_use_case_summary(species, signals),
-        confidence_score=_build_confidence_score(score_result),
-        watchouts=_build_watchouts(signals, score_result),
+        confidence_score=_build_confidence_score(score_result, source_metadata),
+        watchouts=_build_watchouts(signals, score_result, source_metadata),
         top_reasons=top_reasons,
         factors=ranked_factors,
     )
@@ -429,17 +441,105 @@ def _format_distance(distance_nm: float | None) -> str:
     return f"{distance_nm:.1f} nm"
 
 
-def _build_confidence_score(score_result: ScoreResult) -> float:
+def _build_signal_source_metadata(signal: ZoneSignalSourceMetadata) -> SignalSourceMetadata:
+    return SignalSourceMetadata(
+        source=signal.source,
+        source_status=signal.source_status,
+        live_data_available=signal.live_data_available,
+        fallback_used=signal.fallback_used,
+        provider_name=signal.provider_name,
+        dataset_id=signal.dataset_id,
+        resolved_timestamp=signal.resolved_timestamp,
+        failure_reason=signal.failure_reason,
+        upstream_host=signal.upstream_host,
+        attempted_urls=list(signal.attempted_urls),
+        provider_diagnostics=signal.provider_diagnostics or {},
+        warning_messages=list(signal.warning_messages),
+    )
+
+
+def _build_zone_source_metadata(source_metadata: ZoneEnvironmentalSourceMetadata) -> ZoneSourceMetadata:
+    signals = (
+        source_metadata.sst,
+        source_metadata.chlorophyll,
+        source_metadata.current,
+        source_metadata.bathymetry,
+        source_metadata.weather,
+    )
+    warning_messages = [
+        warning
+        for signal in signals
+        for warning in signal.warning_messages
+    ]
+    return ZoneSourceMetadata(
+        sst=_build_signal_source_metadata(source_metadata.sst),
+        chlorophyll=_build_signal_source_metadata(source_metadata.chlorophyll),
+        current=_build_signal_source_metadata(source_metadata.current),
+        bathymetry=_build_signal_source_metadata(source_metadata.bathymetry),
+        weather=_build_signal_source_metadata(source_metadata.weather),
+        live_data_available=any(signal.live_data_available for signal in signals),
+        fallback_used=any(signal.fallback_used for signal in signals),
+        warning_messages=warning_messages,
+    )
+
+
+def _build_source_confidence_penalty(source_metadata: ZoneEnvironmentalSourceMetadata) -> float:
+    penalty_by_source = {
+        "sst": {"processed": 3.0, "mock": 11.0, "mock_fallback": 14.0, "unavailable": 18.0},
+        "chlorophyll": {"processed": 4.0, "mock": 14.0, "mock_fallback": 18.0, "unavailable": 22.0},
+        "current": {"processed": 1.5, "mock": 5.0, "mock_fallback": 7.0, "unavailable": 10.0},
+        "bathymetry": {"processed": 0.0, "mock": 2.0, "mock_fallback": 4.0, "unavailable": 6.0},
+        "weather": {"processed": 1.5, "mock": 4.0, "mock_fallback": 6.0, "unavailable": 8.0},
+    }
+    penalty = 0.0
+    penalty += penalty_by_source["sst"].get(source_metadata.sst.source, 0.0)
+    penalty += penalty_by_source["chlorophyll"].get(source_metadata.chlorophyll.source, 0.0)
+    penalty += penalty_by_source["current"].get(source_metadata.current.source, 0.0)
+    penalty += penalty_by_source["bathymetry"].get(source_metadata.bathymetry.source, 0.0)
+    penalty += penalty_by_source["weather"].get(source_metadata.weather.source, 0.0)
+    return penalty
+
+
+def _build_source_watchouts(source_metadata: ZoneEnvironmentalSourceMetadata) -> list[str]:
+    watchouts: list[str] = []
+    if source_metadata.chlorophyll.source in {"mock", "mock_fallback", "unavailable"}:
+        watchouts.append(
+            "Chlorophyll is estimated for this request, so edge confidence is lower than when live satellite color is available."
+        )
+    elif source_metadata.chlorophyll.source == "processed":
+        watchouts.append(
+            "Chlorophyll is coming from cached imagery for this request, so the color edge may lag the latest live water."
+        )
+    if source_metadata.sst.source in {"mock", "mock_fallback", "unavailable"}:
+        watchouts.append(
+            "SST support is estimated for this request, so the exact break position may be softer than the score suggests."
+        )
+    elif source_metadata.sst.source == "processed":
+        watchouts.append("SST is coming from cached processed water, not the freshest live grid.")
+    if source_metadata.current.source in {"mock", "mock_fallback", "unavailable"}:
+        watchouts.append("Current setup is estimated here, so drift quality may differ from the model when you arrive.")
+    if source_metadata.weather.source in {"mock", "mock_fallback", "unavailable"}:
+        watchouts.append("Weather fishability is estimated for this request, so ride quality could tighten faster than expected.")
+    return watchouts
+
+
+def _build_confidence_score(score_result: ScoreResult, source_metadata: ZoneEnvironmentalSourceMetadata) -> float:
     positive_factors = [
         contribution
         for contribution in score_result.weighted_breakdown.model_dump().values()
         if contribution > 0
     ]
     concentration_bonus = min(len(positive_factors), 6) / 6
-    return round(min(100.0, (score_result.total * 0.78) + (concentration_bonus * 22)), 1)
+    fallback_penalty = _build_source_confidence_penalty(source_metadata)
+    confidence_score = min(100.0, (score_result.total * 0.78) + (concentration_bonus * 22))
+    return round(max(22.0, confidence_score - fallback_penalty), 1)
 
 
-def _build_watchouts(signals: ZoneEnvironmentalSignals, score_result: ScoreResult) -> list[str]:
+def _build_watchouts(
+    signals: ZoneEnvironmentalSignals,
+    score_result: ScoreResult,
+    source_metadata: ZoneEnvironmentalSourceMetadata,
+) -> list[str]:
     watchouts: list[str] = []
     if signals.weather_risk_index >= 0.35:
         watchouts.append("Weather risk is elevated enough that fishability could drop faster than the score implies.")
@@ -451,6 +551,9 @@ def _build_watchouts(signals: ZoneEnvironmentalSignals, score_result: ScoreResul
         watchouts.append("The water temperature is workable, but it is outside the strongest part of the preferred species band.")
     if score_result.breakdown.structure_proximity < 45:
         watchouts.append("Structure influence is lighter here, so the area may need visible life before it earns a full commitment.")
+    for source_watchout in _build_source_watchouts(source_metadata):
+        if source_watchout not in watchouts:
+            watchouts.append(source_watchout)
     return watchouts[:3]
 
 

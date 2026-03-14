@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 def _resolve_source_status(source: str) -> str:
     if source == "live":
         return "live"
+    if source == "processed":
+        return "cached"
+    if source == "mock":
+        return "seed"
     if source == "unavailable":
         return "unavailable"
     return "fallback"
@@ -331,7 +335,11 @@ class SstMapService:
                 fallback_used=source in {"processed", "mock_fallback"},
                 provider_name=type(self.sst_provider).__name__,
                 dataset_id=dataset_id,
+                upstream_host=getattr(self.sst_provider, "last_upstream_host", None),
+                attempted_urls=list(getattr(self.sst_provider, "last_attempted_urls", []) or []),
+                provider_diagnostics=getattr(self.sst_provider, "last_provider_diagnostics", {}) or {},
                 requested_date=trip_date,
+                resolved_timestamp=trip_date.isoformat(),
                 resolved_data_timestamp=trip_date.isoformat(),
                 point_count=len(points),
                 cell_count=len(features),

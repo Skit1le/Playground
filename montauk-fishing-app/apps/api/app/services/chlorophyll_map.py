@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 def _resolve_source_status(source: str) -> str:
     if source == "live":
         return "live"
+    if source == "processed":
+        return "cached"
+    if source == "mock":
+        return "seed"
     if source == "unavailable":
         return "unavailable"
     return "fallback"
@@ -34,9 +38,15 @@ def _resolve_source_status(source: str) -> str:
 
 def _build_warning_messages(*, source: str, failure_reason: str) -> list[str]:
     if source == "processed":
-        return ["Live chlorophyll unavailable; using processed chlorophyll data."]
+        return ["Showing cached chlorophyll data while live satellite chlorophyll is unavailable."]
     if source == "mock_fallback":
-        return ["Live chlorophyll unavailable; using seeded fallback chlorophyll data."]
+        if failure_reason in {"parse_error", "empty_dataset"}:
+            return ["Showing a local chlorophyll estimate because the live satellite feed had no usable values for this request."]
+        if failure_reason in {"network_blocked", "dns_error", "proxy_error", "tls_error", "timeout", "refused_connection"}:
+            return ["Showing a local chlorophyll estimate because the live satellite feed could not be reached from this machine."]
+        if failure_reason == "invalid_dataset":
+            return ["Showing a local chlorophyll estimate because the configured live chlorophyll dataset could not be resolved upstream."]
+        return ["Showing a local chlorophyll estimate while live satellite chlorophyll is unavailable."]
     if source == "unavailable":
         if failure_reason:
             return [f"Chlorophyll data unavailable for this request ({failure_reason})."]
@@ -180,6 +190,7 @@ class ChlorophyllBreakMapService:
             )
             cache_key = getattr(self.chlorophyll_provider, "last_cache_key", "")
             failure_reason = getattr(self.chlorophyll_provider, "last_failure_reason", "")
+            resolved_data_timestamp = getattr(self.chlorophyll_provider, "last_resolved_timestamp", "") or trip_date.isoformat()
         except (ChlorophyllDataUnavailableError, Exception):
             points = ()
             source = "unavailable"
@@ -190,6 +201,7 @@ class ChlorophyllBreakMapService:
             )
             cache_key = ""
             failure_reason = getattr(self.chlorophyll_provider, "last_failure_reason", "")
+            resolved_data_timestamp = getattr(self.chlorophyll_provider, "last_resolved_timestamp", "") or trip_date.isoformat()
 
         cells = build_chlorophyll_cell_signals(points, bbox, effective_target_cells)
         features = list(_build_features(cells, bbox, effective_target_cells))
@@ -225,8 +237,12 @@ class ChlorophyllBreakMapService:
                 fallback_used=source in {"processed", "mock_fallback"},
                 provider_name=type(self.chlorophyll_provider).__name__,
                 dataset_id=dataset_id,
+                upstream_host=getattr(self.chlorophyll_provider, "last_upstream_host", None),
+                attempted_urls=list(getattr(self.chlorophyll_provider, "last_attempted_urls", []) or []),
+                provider_diagnostics=getattr(self.chlorophyll_provider, "last_provider_diagnostics", {}) or {},
                 requested_date=trip_date,
-                resolved_data_timestamp=trip_date.isoformat(),
+                resolved_timestamp=resolved_data_timestamp,
+                resolved_data_timestamp=resolved_data_timestamp,
                 point_count=len(points),
                 cell_count=len(features),
                 chlorophyll_range_mg_m3=chlorophyll_range,

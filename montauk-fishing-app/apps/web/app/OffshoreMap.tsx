@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MapBbox } from "./dashboardUtils";
 import styles from "./page.module.css";
 
 type Zone = {
@@ -102,7 +101,6 @@ type OffshoreMapProps = {
   chlorophyllBreakMapError: string | null;
   selectedZoneId: string | null;
   onZoneSelect: (zoneId: string) => void;
-  onViewportBboxChange: (bbox: MapBbox) => void;
 };
 
 type MapLibreRuntime = typeof import("maplibre-gl");
@@ -192,10 +190,10 @@ function getChlorophyllSourceLabel(source: string | null): string {
     return "Live chlorophyll";
   }
   if (source === "processed") {
-    return "Processed chlorophyll";
+    return "Cached chlorophyll";
   }
   if (source === "mock_fallback") {
-    return "Mock chlorophyll fallback";
+    return "Local chlorophyll estimate";
   }
   if (source === "unavailable") {
     return "Chlorophyll unavailable";
@@ -215,13 +213,10 @@ export default function OffshoreMap({
   chlorophyllBreakMapError,
   selectedZoneId,
   onZoneSelect,
-  onViewportBboxChange,
 }: OffshoreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
-  const lastViewportBboxRef = useRef<string>("");
-  const onViewportBboxChangeRef = useRef(onViewportBboxChange);
   const [sstOpacity, setSstOpacity] = useState(0.62);
   const [showSstSurface, setShowSstSurface] = useState(true);
   const [showSstGrid, setShowSstGrid] = useState(false);
@@ -248,26 +243,6 @@ export default function OffshoreMap({
       },
     [chlorophyllBreakMapData],
   );
-
-  useEffect(() => {
-    onViewportBboxChangeRef.current = onViewportBboxChange;
-  }, [onViewportBboxChange]);
-
-  function emitViewportBbox(map: any) {
-    const bounds = map.getBounds();
-    const bbox: MapBbox = [
-      Number(bounds.getWest().toFixed(4)),
-      Number(bounds.getSouth().toFixed(4)),
-      Number(bounds.getEast().toFixed(4)),
-      Number(bounds.getNorth().toFixed(4)),
-    ];
-    const key = bbox.join(",");
-    if (lastViewportBboxRef.current === key) {
-      return;
-    }
-    lastViewportBboxRef.current = key;
-    onViewportBboxChangeRef.current(bbox);
-  }
 
   useEffect(() => {
     let disposed = false;
@@ -303,7 +278,6 @@ export default function OffshoreMap({
         setMapReady(true);
         map.resize();
         map.fitBounds(DEFAULT_BOUNDS, { padding: 48, duration: 0 });
-        emitViewportBbox(map);
 
         map.addSource("sst-grid", {
           type: "geojson",
@@ -658,10 +632,6 @@ export default function OffshoreMap({
               `<strong>${feature.properties.name}</strong><br/>Score ${feature.properties.score.toFixed(1)}<br/>${feature.properties.summary}`,
             )
             .addTo(map);
-        });
-
-        map.on("moveend", () => {
-          emitViewportBbox(map);
         });
       });
 

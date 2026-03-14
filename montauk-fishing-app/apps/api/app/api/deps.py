@@ -111,6 +111,8 @@ def get_live_chlorophyll_provider() -> LiveCoastwatchChlorophyllAdapter:
         dataset_id=settings.live_chlorophyll_dataset_id,
         base_url=settings.live_chlorophyll_base_url,
         variable_name=settings.live_chlorophyll_variable_name,
+        time_suffix=settings.live_chlorophyll_time_suffix,
+        extra_selectors=settings.live_chlorophyll_extra_selectors,
         min_lat=settings.chlorophyll_bbox_min_lat,
         max_lat=settings.chlorophyll_bbox_max_lat,
         min_lon=settings.chlorophyll_bbox_min_lon,

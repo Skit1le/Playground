@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
-from urllib.error import URLError
+import socket
+from urllib.error import HTTPError, URLError
 
 from app.chlorophyll_provider import (
     ChlorophyllDataUnavailableError,
@@ -46,6 +47,9 @@ class FakeUrlResponse:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
+    def close(self) -> None:
+        return None
+
 
 class FakeUrlOpen:
     def __init__(self, text: str | Exception):
@@ -57,6 +61,40 @@ class FakeUrlOpen:
         if isinstance(self.text, Exception):
             raise self.text
         return FakeUrlResponse(self.text)
+
+
+class FakeUrlOpenSequence:
+    def __init__(self, responses: list[str | Exception]):
+        self.responses = list(responses)
+        self.calls: list[str] = []
+
+    def __call__(self, url: str, timeout: float):
+        self.calls.append(url)
+        if not self.responses:
+            raise AssertionError("No fake responses left for urlopen")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return FakeUrlResponse(response)
+
+
+class FakeCompletedProcess:
+    def __init__(self, *, returncode: int, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class FakeRunCommand:
+    def __init__(self, responses: list[FakeCompletedProcess]):
+        self.responses = list(responses)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, **kwargs):
+        self.calls.append(list(args))
+        if not self.responses:
+            raise AssertionError("No fake responses left for run_command")
+        return self.responses.pop(0)
 
 
 def make_payload() -> dict:
@@ -120,19 +158,37 @@ class ProcessedCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
 
 
 class LiveCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
+    def test_builds_live_query_with_time_suffix_and_extra_selectors(self) -> None:
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            variable_name="chlor_a",
+            time_suffix="T12:00:00Z",
+            extra_selectors="[(0.0)]",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=FakeUrlOpen("time,latitude,longitude,chlor_a\n"),
+        )
+
+        url = adapter._build_csv_url("nesdisVHNchlaDaily", "2026-03-11T12:00:00Z", (40.62, 41.18, -72.28, -71.02))
+
+        self.assertIn("chlor_a[(2026-03-11T12:00:00Z)][(0.0)][(41.18):1:(40.62)][(-72.28):1:(-71.02)]", url)
+
     def test_get_zone_chlorophyll_uses_live_csv_payload(self) -> None:
         url_open = FakeUrlOpen(
             "\n".join(
                 [
-                    "time,latitude,longitude,chlorophyll",
-                    "2026-06-18T00:00:00Z,40.95,-71.88,0.26",
-                    "2026-06-18T00:00:00Z,40.92,-71.82,0.31",
-                    "2026-06-18T00:00:00Z,40.98,-71.95,0.21",
+                    "time,latitude,longitude,chlor_a",
+                    "2026-06-18T12:00:00Z,40.95,-71.88,0.26",
+                    "2026-06-18T12:00:00Z,40.92,-71.82,0.31",
+                    "2026-06-18T12:00:00Z,40.98,-71.95,0.21",
                 ]
             )
         )
         adapter = LiveCoastwatchChlorophyllAdapter(
-            dataset_id="noaacwCHLdaily",
+            dataset_id="nesdisVHNchlaDaily",
             base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
             min_lat=39.8,
             max_lat=41.4,
@@ -149,14 +205,14 @@ class LiveCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
         url_open = FakeUrlOpen(
             "\n".join(
                 [
-                    "time,latitude,longitude,chlorophyll",
-                    "2026-06-18T00:00:00Z,40.95,-71.88,0.26",
-                    "2026-06-18T00:00:00Z,40.92,-71.82,0.31",
+                    "time,latitude,longitude,chlor_a",
+                    "2026-06-18T12:00:00Z,40.95,-71.88,0.26",
+                    "2026-06-18T12:00:00Z,40.92,-71.82,0.31",
                 ]
             )
         )
         adapter = LiveCoastwatchChlorophyllAdapter(
-            dataset_id="noaacwCHLdaily",
+            dataset_id="nesdisVHNchlaDaily",
             base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
             min_lat=39.8,
             max_lat=41.4,
@@ -187,14 +243,14 @@ class LiveCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
         url_open = FakeUrlOpen(
             "\n".join(
                 [
-                    "time,latitude,longitude,chlorophyll",
-                    "2026-06-18T00:00:00Z,40.95,-71.88,0.26",
-                    "2026-06-18T00:00:00Z,40.20,-70.10,0.18",
+                    "time,latitude,longitude,chlor_a",
+                    "2026-06-18T12:00:00Z,40.95,-71.88,0.26",
+                    "2026-06-18T12:00:00Z,40.20,-70.10,0.18",
                 ]
             )
         )
         adapter = LiveCoastwatchChlorophyllAdapter(
-            dataset_id="noaacwCHLdaily",
+            dataset_id="nesdisVHNchlaDaily",
             base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
             min_lat=39.8,
             max_lat=41.4,
@@ -218,14 +274,14 @@ class LiveCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
         url_open = FakeUrlOpen(
             "\n".join(
                 [
-                    "time,latitude,longitude,chlorophyll",
-                    "2026-06-18T00:00:00Z,40.95,-71.88,0.26",
-                    "2026-06-18T00:00:00Z,40.92,-71.82,0.31",
+                    "time,latitude,longitude,chlor_a",
+                    "2026-06-18T12:00:00Z,40.95,-71.88,0.26",
+                    "2026-06-18T12:00:00Z,40.92,-71.82,0.31",
                 ]
             )
         )
         adapter = LiveCoastwatchChlorophyllAdapter(
-            dataset_id="noaacwCHLdaily",
+            dataset_id="nesdisVHNchlaDaily",
             base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
             min_lat=39.8,
             max_lat=41.4,
@@ -245,7 +301,227 @@ class LiveCoastwatchChlorophyllAdapterTestCase(unittest.TestCase):
 
         self.assertEqual(len(points), 2)
         self.assertEqual(len(url_open.calls), 1)
-        self.assertEqual(adapter.last_dataset_id, "noaacwCHLdaily")
+        self.assertEqual(adapter.last_dataset_id, "nesdisVHNchlaDaily")
+
+    def test_retries_latest_available_timestamp_when_requested_date_is_ahead_of_feed(self) -> None:
+        first_error = HTTPError(
+            url="https://example.com/first.csv",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=FakeUrlResponse(
+                'Error { message="Query error: axis maximum=2026-03-09T12:00:00Z."; }'
+            ),
+        )
+        url_open = FakeUrlOpenSequence(
+            [
+                first_error,
+                "\n".join(
+                    [
+                        "time,latitude,longitude,chlor_a",
+                        "2026-03-09T12:00:00Z,40.95,-71.88,0.26",
+                        "2026-03-09T12:00:00Z,40.92,-71.82,0.31",
+                    ]
+                ),
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            variable_name="chlor_a",
+            time_suffix="T12:00:00Z",
+            extra_selectors="[(0.0)]",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+        )
+
+        points = adapter.get_chlorophyll_points(date(2026, 3, 11))
+
+        self.assertEqual(len(points), 2)
+        self.assertEqual(adapter.last_resolved_timestamp, "2026-03-09T12:00:00Z")
+        self.assertEqual(adapter.last_failure_reason, "")
+        self.assertEqual(len(url_open.calls), 2)
+
+    def test_falls_back_to_curl_when_socket_access_is_blocked(self) -> None:
+        url_open = FakeUrlOpen(URLError("[WinError 10013] socket blocked"))
+        run_command = FakeRunCommand(
+            [
+                FakeCompletedProcess(
+                    returncode=0,
+                    stdout="\n".join(
+                        [
+                            "time,latitude,longitude,chlor_a",
+                            "2026-03-09T12:00:00Z,40.95,-71.88,0.26",
+                            "2026-03-09T12:00:00Z,40.92,-71.82,0.31",
+                            "__HTTP_STATUS__:200",
+                        ]
+                    ),
+                )
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+            run_command=run_command,
+        )
+
+        points = adapter.get_chlorophyll_points(date(2026, 3, 11))
+
+        self.assertEqual(len(points), 2)
+        self.assertEqual(adapter.last_failure_reason, "")
+        self.assertEqual(len(run_command.calls), 1)
+
+    def test_retries_on_initial_timeout_then_succeeds_via_curl(self) -> None:
+        url_open = FakeUrlOpen(TimeoutError("timed out"))
+        run_command = FakeRunCommand(
+            [
+                FakeCompletedProcess(
+                    returncode=0,
+                    stdout="\n".join(
+                        [
+                            "time,latitude,longitude,chlor_a",
+                            "2026-03-11T12:00:00Z,40.95,-71.88,0.26",
+                            "2026-03-11T12:00:00Z,40.92,-71.82,0.31",
+                            "__HTTP_STATUS__:200",
+                        ]
+                    ),
+                )
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+            run_command=run_command,
+        )
+
+        points = adapter.get_chlorophyll_points(date(2026, 3, 11))
+
+        self.assertEqual(len(points), 2)
+        self.assertEqual(adapter.last_failure_reason, "")
+        self.assertEqual(adapter.last_dataset_id, "nesdisVHNchlaDaily")
+
+    def test_classifies_dns_failure_precisely(self) -> None:
+        url_open = FakeUrlOpen(URLError(socket.gaierror("host lookup failed")))
+        run_command = FakeRunCommand(
+            [
+                FakeCompletedProcess(
+                    returncode=6,
+                    stderr="curl: (6) Could not resolve host: coastwatch.pfeg.noaa.gov",
+                ),
+                FakeCompletedProcess(
+                    returncode=6,
+                    stderr="curl: (6) Could not resolve host: coastwatch.pfeg.noaa.gov",
+                ),
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+            run_command=run_command,
+        )
+
+        with self.assertRaises(ChlorophyllDataUnavailableError):
+            adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "dns_error")
+
+    def test_classifies_network_block_precisely(self) -> None:
+        url_open = FakeUrlOpen(URLError("[WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions"))
+        run_command = FakeRunCommand(
+            [
+                FakeCompletedProcess(
+                    returncode=7,
+                    stderr="curl: (7) Failed to connect to coastwatch.pfeg.noaa.gov port 443 after 120 ms: Could not connect to server",
+                ),
+                FakeCompletedProcess(
+                    returncode=7,
+                    stderr="curl: (7) Failed to connect to coastwatch.pfeg.noaa.gov port 443 after 120 ms: Could not connect to server",
+                ),
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+            run_command=run_command,
+        )
+
+        with self.assertRaises(ChlorophyllDataUnavailableError):
+            adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "network_blocked")
+
+    def test_classifies_invalid_dataset_after_alias_attempts(self) -> None:
+        url_open = FakeUrlOpenSequence(
+            [
+                HTTPError(url="https://example.com/a.csv", code=404, msg="Not Found", hdrs=None, fp=FakeUrlResponse("dataset missing")),
+                HTTPError(url="https://example.com/b.csv", code=404, msg="Not Found", hdrs=None, fp=FakeUrlResponse("dataset missing")),
+                HTTPError(url="https://example.com/c.csv", code=404, msg="Not Found", hdrs=None, fp=FakeUrlResponse("dataset missing")),
+            ]
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+            alternate_dataset_ids=("anotherBadDataset",),
+        )
+
+        with self.assertRaises(ChlorophyllDataUnavailableError):
+            adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(adapter.last_failure_reason, "invalid_dataset")
+        self.assertGreaterEqual(len(adapter.last_attempted_urls), 3)
+
+    def test_skips_nan_values_in_live_csv_payload(self) -> None:
+        url_open = FakeUrlOpen(
+            "\n".join(
+                [
+                    "time,latitude,longitude,chlor_a",
+                    "2026-06-18T12:00:00Z,40.95,-71.88,NaN",
+                    "2026-06-18T12:00:00Z,40.92,-71.82,0.31",
+                ]
+            )
+        )
+        adapter = LiveCoastwatchChlorophyllAdapter(
+            dataset_id="nesdisVHNchlaDaily",
+            base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
+            min_lat=39.8,
+            max_lat=41.4,
+            min_lon=-72.4,
+            max_lon=-69.8,
+            open_url=url_open,
+        )
+
+        points = adapter.get_chlorophyll_points(date(2026, 6, 18))
+
+        self.assertEqual(len(points), 1)
+        self.assertEqual(points[0].chlorophyll_mg_m3, 0.31)
 
 
 class FakeChlorophyllProvider:
@@ -336,7 +612,15 @@ class FallbackChlorophyllProviderTestCase(unittest.TestCase):
         self.assertEqual(provider.last_failure_reason, "live missing")
 
     def test_live_chlorophyll_adapter_classifies_connection_failure(self) -> None:
-        url_open = FakeUrlOpen(URLError("socket blocked"))
+        url_open = FakeUrlOpen(URLError("generic socket failure"))
+        run_command = FakeRunCommand(
+            [
+                FakeCompletedProcess(
+                    returncode=7,
+                    stderr="curl: (7) A generic connect failure occurred",
+                )
+            ]
+        )
         adapter = LiveCoastwatchChlorophyllAdapter(
             dataset_id="noaacwCHLdaily",
             base_url="https://coastwatch.pfeg.noaa.gov/erddap/griddap",
@@ -345,6 +629,7 @@ class FallbackChlorophyllProviderTestCase(unittest.TestCase):
             min_lon=-72.4,
             max_lon=-69.8,
             open_url=url_open,
+            run_command=run_command,
         )
 
         with self.assertRaises(ChlorophyllDataUnavailableError):

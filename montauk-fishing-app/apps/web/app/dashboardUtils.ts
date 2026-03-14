@@ -31,6 +31,9 @@ export type LayerSourceMetadata = {
   live_data_available?: boolean;
   provider_name?: string | null;
   dataset_id?: string | null;
+  upstream_host?: string | null;
+  attempted_urls?: string[] | null;
+  provider_diagnostics?: Record<string, string | number | boolean | null> | null;
   requested_date?: string | null;
   failure_reason?: string | null;
   warning_messages?: string[] | null;
@@ -57,6 +60,23 @@ export function formatBboxParam(bbox: MapBbox): string {
 
 export function areBboxesEquivalent(left: MapBbox, right: MapBbox): boolean {
   return left.every((value, index) => Math.abs(value - right[index]) < 0.0001);
+}
+
+export function clampBboxToBounds(bbox: MapBbox, bounds: MapBbox): MapBbox {
+  const [minLon, minLat, maxLon, maxLat] = bbox;
+  const [boundsMinLon, boundsMinLat, boundsMaxLon, boundsMaxLat] = bounds;
+
+  const clampedMinLon = Math.max(boundsMinLon, Math.min(minLon, boundsMaxLon));
+  const clampedMaxLon = Math.max(boundsMinLon, Math.min(maxLon, boundsMaxLon));
+  const clampedMinLat = Math.max(boundsMinLat, Math.min(minLat, boundsMaxLat));
+  const clampedMaxLat = Math.max(boundsMinLat, Math.min(maxLat, boundsMaxLat));
+
+  return [
+    Math.min(clampedMinLon, clampedMaxLon),
+    Math.min(clampedMinLat, clampedMaxLat),
+    Math.max(clampedMinLon, clampedMaxLon),
+    Math.max(clampedMinLat, clampedMaxLat),
+  ];
 }
 
 export function formatZoneExplanationLabel(factor: string): string {
@@ -163,11 +183,29 @@ export function buildLayerStatusMessage(layerLabel: string, metadata: LayerSourc
   if (Array.isArray(metadata.warning_messages) && metadata.warning_messages.length > 0) {
     return metadata.warning_messages[0];
   }
+  if (metadata.failure_reason === "network_blocked") {
+    return `Live ${layerLabel} is blocked from reaching ${metadata.upstream_host ?? "the upstream host"} in this environment, so a fallback estimate is being used.`;
+  }
+  if (metadata.failure_reason === "dns_error") {
+    return `Live ${layerLabel} could not resolve the upstream host, so a fallback estimate is being used.`;
+  }
+  if (metadata.failure_reason === "timeout") {
+    return `Live ${layerLabel} timed out upstream, so a fallback estimate is being used.`;
+  }
+  if (metadata.failure_reason === "invalid_dataset") {
+    return `The configured live ${layerLabel} dataset could not be resolved upstream, so a fallback estimate is being used.`;
+  }
+  if (metadata.failure_reason === "unsupported_date") {
+    return `Live ${layerLabel} was unavailable for the selected date, so a fallback estimate is being used.`;
+  }
+  if (metadata.failure_reason === "parse_error" || metadata.failure_reason === "empty_dataset") {
+    return `Live ${layerLabel} returned no usable values for this request, so a fallback estimate is being used.`;
+  }
   if (metadata.source === "processed") {
-    return `Live ${layerLabel} unavailable; using processed ${layerLabel} data.`;
+    return `Showing cached ${layerLabel} data while live ${layerLabel} is unavailable.`;
   }
   if (metadata.source === "mock_fallback") {
-    return `Live ${layerLabel} unavailable; using seeded fallback ${layerLabel} data.`;
+    return `Showing a local ${layerLabel} estimate while live ${layerLabel} is unavailable.`;
   }
   if (metadata.source === "unavailable") {
     return metadata.failure_reason

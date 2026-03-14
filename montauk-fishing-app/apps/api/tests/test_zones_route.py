@@ -8,9 +8,11 @@ from app.schemas import (
     RankedZone,
     ScoreBreakdown,
     ScoreExplanationFactor,
+    SignalSourceMetadata,
     WeightedScoreBreakdown,
     WeightedScoreConfig,
     ZoneCenter,
+    ZoneSourceMetadata,
     ZoneScoreExplanation,
 )
 from app.services.zones import SpeciesConfigNotFoundError
@@ -102,6 +104,26 @@ def make_ranked_zone() -> RankedZone:
                 )
             ],
         ),
+        source_metadata=ZoneSourceMetadata(
+            sst=SignalSourceMetadata(source="live", source_status="live", live_data_available=True, fallback_used=False),
+            chlorophyll=SignalSourceMetadata(
+                source="mock_fallback",
+                source_status="fallback",
+                live_data_available=False,
+                fallback_used=True,
+                warning_messages=[
+                    "Using estimated chlorophyll data because the higher-priority source was unavailable (connection_error)."
+                ],
+            ),
+            current=SignalSourceMetadata(source="processed", source_status="cached", fallback_used=True),
+            bathymetry=SignalSourceMetadata(source="processed", source_status="cached", fallback_used=True),
+            weather=SignalSourceMetadata(source="processed", source_status="cached", fallback_used=True),
+            live_data_available=True,
+            fallback_used=True,
+            warning_messages=[
+                "Using estimated chlorophyll data because the higher-priority source was unavailable (connection_error)."
+            ],
+        ),
         scored_for_species="bluefin",
         scored_for_date=date(2026, 6, 18),
     )
@@ -119,6 +141,7 @@ class ZonesRouteTestCase(unittest.TestCase):
 
         self.assertEqual(len(response), 1)
         self.assertEqual(fake_service.calls, [("bluefin", date(2026, 6, 18), 10)])
+        self.assertEqual(response[0].source_metadata.chlorophyll.source, "mock_fallback")
 
     def test_list_zones_accepts_mm_dd_yyyy_dates(self) -> None:
         fake_service = FakeZonesService(response=[make_ranked_zone()])

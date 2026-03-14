@@ -62,9 +62,11 @@ class Settings(BaseSettings):
         alias="LIVE_CHLOROPHYLL_DATASET_ID",
     )
     live_chlorophyll_variable_name: str = Field(
-        default="chlorophyll",
+        default="chlor_a",
         alias="LIVE_CHLOROPHYLL_VARIABLE_NAME",
     )
+    live_chlorophyll_time_suffix: str = Field(default="T12:00:00Z", alias="LIVE_CHLOROPHYLL_TIME_SUFFIX")
+    live_chlorophyll_extra_selectors: str = Field(default="[(0.0)]", alias="LIVE_CHLOROPHYLL_EXTRA_SELECTORS")
     current_bbox_min_lat: float = Field(default=39.8, alias="CURRENT_BBOX_MIN_LAT")
     current_bbox_max_lat: float = Field(default=41.4, alias="CURRENT_BBOX_MAX_LAT")
     current_bbox_min_lon: float = Field(default=-72.4, alias="CURRENT_BBOX_MIN_LON")
@@ -81,6 +83,10 @@ class Settings(BaseSettings):
     allowed_origins_raw: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
         alias="ALLOWED_ORIGINS",
+    )
+    allowed_origin_regex: str = Field(
+        default=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        alias="ALLOWED_ORIGIN_REGEX",
     )
 
     model_config = SettingsConfigDict(

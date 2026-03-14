@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import csv
+import errno
 import logging
+import math
+import re
+import socket
 import ssl
+import subprocess
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
@@ -19,6 +24,10 @@ from app.seed_data import MOCK_ZONE_ENVIRONMENTAL_SIGNALS, ZONE_CATALOG
 _MISSING_POINTS: tuple["ChlorophyllPoint", ...] = ()
 BBox: TypeAlias = tuple[float, float, float, float]
 logger = logging.getLogger(__name__)
+_AXIS_MAXIMUM_TIMESTAMP_PATTERN = re.compile(r"axis maximum=([0-9T:\-]+Z)")
+_KNOWN_DATASET_ALIASES: dict[str, tuple[str, ...]] = {
+    "nesdisVHNchlaDaily": ("noaacwNPPVIIRSchlaDaily",),
+}
 
 
 @dataclass(frozen=True)
@@ -31,6 +40,12 @@ class ChlorophyllPoint:
     latitude: float
     longitude: float
     chlorophyll_mg_m3: float
+
+
+@dataclass(frozen=True)
+class _FetchResult:
+    status_code: int
+    body: str
 
 
 class ChlorophyllProvider(Protocol):
@@ -155,15 +170,21 @@ class UpstreamCoastwatchChlorophyllAdapter:
         max_lat: float,
         min_lon: float,
         max_lon: float,
-        variable_name: str = "chlorophyll",
+        variable_name: str = "chlor_a",
+        time_suffix: str = "T12:00:00Z",
+        extra_selectors: str = "[(0.0)]",
         value_column_candidates: tuple[str, ...] = (
-            "chlorophyll",
             "chlorophyll_concentration",
             "chlor_a",
+            "chlorophyll",
             "value",
         ),
         timeout_seconds: float = 2.0,
+        retry_attempts: int = 2,
         open_url: Callable[..., Any] = urlopen,
+        curl_binary: str = "curl.exe",
+        run_command: Callable[..., Any] = subprocess.run,
+        alternate_dataset_ids: tuple[str, ...] = (),
     ):
         self.dataset_id = dataset_id
         self.base_url = base_url.rstrip("/")
@@ -172,9 +193,15 @@ class UpstreamCoastwatchChlorophyllAdapter:
         self.min_lon = min_lon
         self.max_lon = max_lon
         self.variable_name = variable_name
+        self.time_suffix = time_suffix
+        self.extra_selectors = extra_selectors
         self.value_column_candidates = value_column_candidates
         self.timeout_seconds = timeout_seconds
+        self.retry_attempts = retry_attempts
         self.open_url = open_url
+        self.curl_binary = curl_binary
+        self.run_command = run_command
+        self.alternate_dataset_ids = alternate_dataset_ids
         self.configured_dataset_id = dataset_id
         self.last_dataset_id = dataset_id
         self.last_cache_key = ""
@@ -182,6 +209,10 @@ class UpstreamCoastwatchChlorophyllAdapter:
         self.last_exception_class = ""
         self.last_exception_message = ""
         self.last_status_code: int | None = None
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host = urlparse(self.base_url).netloc
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def _default_bbox(self) -> BBox:
         return _normalize_bbox(
@@ -206,141 +237,243 @@ class UpstreamCoastwatchChlorophyllAdapter:
             max_lon=self.max_lon if max_lon is None else max_lon,
         )
 
-    def _build_csv_url(self, target_date: str, bbox: BBox) -> str:
+    def _candidate_dataset_ids(self) -> tuple[str, ...]:
+        configured = self.dataset_id.strip()
+        aliases = _KNOWN_DATASET_ALIASES.get(configured, ())
+        ordered = [configured, *self.alternate_dataset_ids, *aliases]
+        unique: list[str] = []
+        for dataset_id in ordered:
+            if dataset_id and dataset_id not in unique:
+                unique.append(dataset_id)
+        return tuple(unique)
+
+    def _build_csv_url(self, dataset_id: str, target_timestamp: str, bbox: BBox) -> str:
         min_lat, max_lat, min_lon, max_lon = bbox
         query = (
-            f"{self.variable_name}[({target_date}T00:00:00Z)]"
+            f"{self.variable_name}[({target_timestamp})]"
+            f"{self.extra_selectors}"
             f"[({max_lat}):1:({min_lat})]"
             f"[({min_lon}):1:({max_lon})]"
         )
         encoded_query = quote(query, safe="[]():,")
-        return f"{self.base_url}/{self.dataset_id}.csv?{encoded_query}"
+        return f"{self.base_url}/{dataset_id}.csv?{encoded_query}"
+
+    def _target_timestamp(self, target_date: str) -> str:
+        if "T" in target_date:
+            return target_date
+        return f"{target_date}{self.time_suffix}"
+
+    def _extract_axis_maximum_timestamp(self, error_text: str) -> str | None:
+        match = _AXIS_MAXIMUM_TIMESTAMP_PATTERN.search(error_text)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _fetch_with_curl(self, url: str) -> _FetchResult:
+        sentinel = "__HTTP_STATUS__:"
+        timeout_seconds = max(1, int(math.ceil(self.timeout_seconds)))
+        completed = self.run_command(
+            [
+                self.curl_binary,
+                "--globoff",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--retry",
+                str(max(0, self.retry_attempts - 1)),
+                "--retry-all-errors",
+                "--retry-delay",
+                "1",
+                "--connect-timeout",
+                str(timeout_seconds),
+                "--max-time",
+                str(timeout_seconds),
+                "--user-agent",
+                "MontaukFishingApp/1.0 (+chlorophyll-provider)",
+                "--write-out",
+                f"\n{sentinel}%{{http_code}}",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise OSError(
+                completed.stderr.strip() or f"{self.curl_binary} exited with code {completed.returncode}"
+            )
+
+        stdout = completed.stdout
+        marker_index = stdout.rfind(sentinel)
+        if marker_index < 0:
+            raise ValueError("curl response did not include an HTTP status marker")
+
+        body = stdout[:marker_index].rstrip("\r\n")
+        status_text = stdout[marker_index + len(sentinel) :].strip()
+        if not status_text.isdigit():
+            raise ValueError("curl response did not include a numeric HTTP status")
+        return _FetchResult(status_code=int(status_text), body=body)
+
+    def _fetch(self, url: str) -> _FetchResult:
+        try:
+            with self.open_url(url, timeout=self.timeout_seconds) as response:
+                return _FetchResult(status_code=200, body=response.read().decode("utf-8"))
+        except HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="ignore")
+            except Exception:
+                error_body = ""
+            return _FetchResult(status_code=exc.code, body=error_body)
+        except TimeoutError:
+            return self._fetch_with_curl(url)
+        except (URLError, OSError, ValueError, ssl.SSLError) as exc:
+            failure_reason = self._classify_request_error(exc)
+            if failure_reason in {
+                "network_blocked",
+                "dns_error",
+                "tls_error",
+                "proxy_error",
+                "timeout",
+                "refused_connection",
+                "connection_error",
+            }:
+                return self._fetch_with_curl(url)
+            raise
 
     def _classify_request_error(self, exc: Exception) -> str:
         if isinstance(exc, ValueError):
             return "invalid_url"
         if isinstance(exc, ssl.SSLError):
-            return "ssl_error"
+            return "tls_error"
+        if isinstance(exc, TimeoutError):
+            return "timeout"
         if isinstance(exc, URLError):
             reason = exc.reason
+            if isinstance(reason, socket.gaierror):
+                return "dns_error"
+            if isinstance(reason, TimeoutError):
+                return "timeout"
+            if isinstance(reason, ConnectionRefusedError):
+                return "refused_connection"
             if isinstance(reason, ssl.SSLError):
-                return "ssl_error"
+                return "tls_error"
             reason_text = str(reason).lower()
             if "proxy" in reason_text:
                 return "proxy_error"
             if "ssl" in reason_text or "certificate" in reason_text:
-                return "ssl_error"
+                return "tls_error"
             if "unknown url type" in reason_text or "no host given" in reason_text:
                 return "invalid_url"
+            if "timed out" in reason_text:
+                return "timeout"
+            if "refused" in reason_text:
+                return "refused_connection"
+            if (
+                "forbidden by its access permissions" in reason_text
+                or "network is unreachable" in reason_text
+                or "10013" in reason_text
+                or "socket blocked" in reason_text
+            ):
+                return "network_blocked"
             return "connection_error"
         if isinstance(exc, OSError):
             message = str(exc).lower()
+            if getattr(exc, "errno", None) in {errno.ECONNREFUSED}:
+                return "refused_connection"
+            if getattr(exc, "errno", None) in {errno.ENETUNREACH, errno.EHOSTUNREACH}:
+                return "network_blocked"
             if "ssl" in message or "certificate" in message:
-                return "ssl_error"
+                return "tls_error"
             if "proxy" in message:
                 return "proxy_error"
+            if "timed out" in message:
+                return "timeout"
+            if "refused" in message:
+                return "refused_connection"
+            if "could not resolve host" in message or "name or service not known" in message:
+                return "dns_error"
+            if (
+                "failed to connect" in message
+                or "access permissions" in message
+                or "network is unreachable" in message
+                or "10013" in message
+                or "socket blocked" in message
+            ):
+                return "network_blocked"
             return "connection_error"
         return "request_exception"
 
-    @lru_cache(maxsize=32)
-    def _load_points(self, target_date: str, bbox: BBox) -> tuple[ChlorophyllPoint, ...]:
-        if not self.dataset_id or self.dataset_id.startswith("CONFIGURE_"):
-            self.last_failure_reason = "missing_dataset_id"
-            self.last_exception_class = ""
-            self.last_exception_message = ""
-            self.last_status_code = None
-            return _MISSING_POINTS
+    def _set_failure_state(
+        self,
+        *,
+        failure_reason: str,
+        exception_class: str = "",
+        exception_message: str = "",
+        status_code: int | None = None,
+        diagnostics: dict[str, str | int | float | bool | None] | None = None,
+    ) -> None:
+        self.last_failure_reason = failure_reason
+        self.last_exception_class = exception_class
+        self.last_exception_message = exception_message
+        self.last_status_code = status_code
+        self.last_provider_diagnostics = diagnostics or {}
 
-        url = self._build_csv_url(target_date, bbox)
-        parsed = urlparse(url)
-        if not parsed.scheme or not parsed.netloc:
-            self.last_failure_reason = "invalid_url"
-            self.last_exception_class = "ValueError"
-            self.last_exception_message = "Malformed upstream chlorophyll URL"
-            self.last_status_code = None
-            logger.warning(
-                "Live chlorophyll request URL is invalid",
-                extra={
-                    "dataset_id": self.dataset_id,
-                    "variable_name": self.variable_name,
-                    "timeout_seconds": self.timeout_seconds,
-                    "request_url": url,
-                    "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
-                    "base_url": self.base_url,
-                },
-            )
-            return _MISSING_POINTS
-        try:
-            with self.open_url(url, timeout=self.timeout_seconds) as response:
-                raw_text = response.read().decode("utf-8")
-        except TimeoutError:
-            self.last_failure_reason = "timeout"
-            self.last_exception_class = "TimeoutError"
-            self.last_exception_message = "The upstream chlorophyll request timed out."
-            self.last_status_code = None
-            logger.warning(
-                "Live chlorophyll fetch timed out",
-                extra={
-                    "dataset_id": self.dataset_id,
-                    "variable_name": self.variable_name,
-                    "trip_date": target_date,
-                    "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
-                    "request_url": url,
-                    "timeout_seconds": self.timeout_seconds,
-                },
-            )
-            return _MISSING_POINTS
-        except HTTPError as exc:
-            self.last_failure_reason = f"upstream_http_{exc.code}"
-            self.last_exception_class = type(exc).__name__
-            self.last_exception_message = str(exc)
-            self.last_status_code = exc.code
-            logger.warning(
-                "Live chlorophyll fetch returned HTTP error",
-                extra={
-                    "dataset_id": self.dataset_id,
-                    "variable_name": self.variable_name,
-                    "trip_date": target_date,
-                    "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
-                    "status_code": exc.code,
-                    "request_url": url,
-                    "timeout_seconds": self.timeout_seconds,
-                },
-            )
-            return _MISSING_POINTS
-        except (URLError, OSError, ValueError, ssl.SSLError) as exc:
-            self.last_failure_reason = self._classify_request_error(exc)
-            self.last_exception_class = type(exc).__name__
-            self.last_exception_message = str(exc)
-            self.last_status_code = None
-            logger.warning(
-                "Live chlorophyll fetch failed before parsing",
-                extra={
-                    "dataset_id": self.dataset_id,
-                    "variable_name": self.variable_name,
-                    "trip_date": target_date,
-                    "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
-                    "request_url": url,
-                    "timeout_seconds": self.timeout_seconds,
-                    "exception_class": type(exc).__name__,
-                    "exception_message": str(exc),
-                    "failure_reason": self.last_failure_reason,
-                },
-            )
-            return _MISSING_POINTS
+    def _reset_request_diagnostics(self) -> None:
+        self.last_attempted_urls = []
+        self.last_provider_diagnostics = {}
+        self.last_exception_class = ""
+        self.last_exception_message = ""
+        self.last_status_code = None
+        self.last_dataset_id = None
+        self.last_resolved_timestamp = ""
 
+    def _build_diagnostics(
+        self,
+        *,
+        dataset_id: str,
+        request_url: str,
+        status_code: int | None = None,
+        attempt_number: int = 1,
+        target_timestamp: str,
+    ) -> dict[str, str | int | float | bool | None]:
+        return {
+            "configured_dataset_id": self.configured_dataset_id,
+            "resolved_dataset_id": dataset_id,
+            "upstream_host": self.last_upstream_host,
+            "request_url": request_url,
+            "attempt_number": attempt_number,
+            "retry_attempts": self.retry_attempts,
+            "timeout_seconds": self.timeout_seconds,
+            "target_timestamp": target_timestamp,
+            "status_code": status_code,
+        }
+
+    def _parse_csv_points(
+        self,
+        raw_text: str,
+        *,
+        dataset_id: str,
+        target_timestamp: str,
+        bbox: BBox,
+        url: str,
+    ) -> tuple[ChlorophyllPoint, ...]:
         reader = csv.DictReader(StringIO(raw_text))
         if not reader.fieldnames:
-            self.last_failure_reason = "bad_response_shape"
-            self.last_exception_class = ""
-            self.last_exception_message = ""
-            self.last_status_code = None
+            self._set_failure_state(
+                failure_reason="parse_error",
+                diagnostics=self._build_diagnostics(
+                    dataset_id=dataset_id,
+                    request_url=url,
+                    target_timestamp=target_timestamp,
+                ),
+            )
             logger.warning(
                 "Live chlorophyll response had no CSV headers",
                 extra={
-                    "dataset_id": self.dataset_id,
+                    "dataset_id": dataset_id,
                     "variable_name": self.variable_name,
-                    "trip_date": target_date,
+                    "trip_date": target_timestamp,
                     "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
                     "request_url": url,
                 },
@@ -354,25 +487,34 @@ class UpstreamCoastwatchChlorophyllAdapter:
                 if value_text is None:
                     continue
                 value_column_found = True
+                latitude = float(row["latitude"])
+                longitude = float(row["longitude"])
+                value = float(value_text)
+                if not math.isfinite(latitude) or not math.isfinite(longitude) or not math.isfinite(value):
+                    continue
                 points.append(
                     ChlorophyllPoint(
-                        latitude=float(row["latitude"]),
-                        longitude=float(row["longitude"]),
-                        chlorophyll_mg_m3=float(value_text),
+                        latitude=latitude,
+                        longitude=longitude,
+                        chlorophyll_mg_m3=value,
                     )
                 )
             except (KeyError, TypeError, ValueError):
                 continue
         if not value_column_found:
-            self.last_failure_reason = "variable_not_found"
-            self.last_exception_class = ""
-            self.last_exception_message = ""
-            self.last_status_code = None
+            self._set_failure_state(
+                failure_reason="parse_error",
+                diagnostics=self._build_diagnostics(
+                    dataset_id=dataset_id,
+                    request_url=url,
+                    target_timestamp=target_timestamp,
+                ),
+            )
             logger.warning(
                 "Live chlorophyll response did not contain the configured value column",
                 extra={
-                    "dataset_id": self.dataset_id,
-                    "trip_date": target_date,
+                    "dataset_id": dataset_id,
+                    "trip_date": target_timestamp,
                     "variable_name": self.variable_name,
                     "fieldnames": reader.fieldnames,
                     "request_url": url,
@@ -380,25 +522,209 @@ class UpstreamCoastwatchChlorophyllAdapter:
             )
             return _MISSING_POINTS
         if not points:
-            self.last_failure_reason = "bad_response_shape"
-            self.last_exception_class = ""
-            self.last_exception_message = ""
-            self.last_status_code = None
+            self._set_failure_state(
+                failure_reason="empty_dataset",
+                diagnostics=self._build_diagnostics(
+                    dataset_id=dataset_id,
+                    request_url=url,
+                    target_timestamp=target_timestamp,
+                ),
+            )
             logger.warning(
                 "Live chlorophyll response was parsed but yielded no valid points",
                 extra={
-                    "dataset_id": self.dataset_id,
-                    "trip_date": target_date,
+                    "dataset_id": dataset_id,
+                    "trip_date": target_timestamp,
                     "variable_name": self.variable_name,
                     "request_url": url,
                 },
             )
             return _MISSING_POINTS
-        self.last_failure_reason = ""
-        self.last_exception_class = ""
-        self.last_exception_message = ""
-        self.last_status_code = None
+        self._set_failure_state(
+            failure_reason="",
+            diagnostics=self._build_diagnostics(
+                dataset_id=dataset_id,
+                request_url=url,
+                target_timestamp=target_timestamp,
+            ),
+        )
+        self.last_resolved_timestamp = target_timestamp
+        self.last_dataset_id = dataset_id
         return tuple(points)
+
+    @lru_cache(maxsize=32)
+    def _load_points(self, target_date: str, bbox: BBox) -> tuple[ChlorophyllPoint, ...]:
+        self._reset_request_diagnostics()
+        if not self.dataset_id or self.dataset_id.startswith("CONFIGURE_"):
+            self._set_failure_state(failure_reason="missing_dataset_id")
+            return _MISSING_POINTS
+
+        target_timestamp = self._target_timestamp(target_date)
+        for attempt_number, dataset_id in enumerate(self._candidate_dataset_ids(), start=1):
+            url = self._build_csv_url(dataset_id, target_timestamp, bbox)
+            self.last_attempted_urls.append(url)
+            parsed = urlparse(url)
+            if not parsed.scheme or not parsed.netloc:
+                self._set_failure_state(
+                    failure_reason="invalid_url",
+                    exception_class="ValueError",
+                    exception_message="Malformed upstream chlorophyll URL",
+                    diagnostics=self._build_diagnostics(
+                        dataset_id=dataset_id,
+                        request_url=url,
+                        attempt_number=attempt_number,
+                        target_timestamp=target_timestamp,
+                    ),
+                )
+                continue
+            try:
+                fetch_result = self._fetch(url)
+            except TimeoutError:
+                self._set_failure_state(
+                    failure_reason="timeout",
+                    exception_class="TimeoutError",
+                    exception_message="The upstream chlorophyll request timed out.",
+                    diagnostics=self._build_diagnostics(
+                        dataset_id=dataset_id,
+                        request_url=url,
+                        attempt_number=attempt_number,
+                        target_timestamp=target_timestamp,
+                    ),
+                )
+                continue
+            except (URLError, OSError, ValueError, ssl.SSLError) as exc:
+                failure_reason = self._classify_request_error(exc)
+                self._set_failure_state(
+                    failure_reason=failure_reason,
+                    exception_class=type(exc).__name__,
+                    exception_message=str(exc),
+                    diagnostics=self._build_diagnostics(
+                        dataset_id=dataset_id,
+                        request_url=url,
+                        attempt_number=attempt_number,
+                        target_timestamp=target_timestamp,
+                    ),
+                )
+                logger.warning(
+                    "Live chlorophyll fetch failed before parsing",
+                    extra={
+                        "dataset_id": dataset_id,
+                        "variable_name": self.variable_name,
+                        "trip_date": target_date,
+                        "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
+                        "request_url": url,
+                        "timeout_seconds": self.timeout_seconds,
+                        "exception_class": type(exc).__name__,
+                        "exception_message": str(exc),
+                        "failure_reason": failure_reason,
+                        "attempt_number": attempt_number,
+                    },
+                )
+                continue
+
+            if fetch_result.status_code >= 400:
+                error_body = fetch_result.body
+                fallback_timestamp = self._extract_axis_maximum_timestamp(error_body)
+                if fetch_result.status_code == 404 and fallback_timestamp and fallback_timestamp != target_timestamp:
+                    retry_url = self._build_csv_url(dataset_id, fallback_timestamp, bbox)
+                    self.last_attempted_urls.append(retry_url)
+                    try:
+                        retry_result = self._fetch(retry_url)
+                    except TimeoutError:
+                        self._set_failure_state(
+                            failure_reason="timeout",
+                            exception_class="TimeoutError",
+                            exception_message="The upstream chlorophyll request timed out.",
+                            diagnostics=self._build_diagnostics(
+                                dataset_id=dataset_id,
+                                request_url=retry_url,
+                                attempt_number=attempt_number,
+                                target_timestamp=fallback_timestamp,
+                            ),
+                        )
+                        continue
+                    except (URLError, OSError, ValueError, ssl.SSLError) as retry_exc:
+                        failure_reason = self._classify_request_error(retry_exc)
+                        self._set_failure_state(
+                            failure_reason=failure_reason,
+                            exception_class=type(retry_exc).__name__,
+                            exception_message=str(retry_exc),
+                            diagnostics=self._build_diagnostics(
+                                dataset_id=dataset_id,
+                                request_url=retry_url,
+                                attempt_number=attempt_number,
+                                target_timestamp=fallback_timestamp,
+                            ),
+                        )
+                        continue
+                    if retry_result.status_code >= 400:
+                        failure_reason = "upstream_5xx" if retry_result.status_code >= 500 else "upstream_4xx"
+                        self._set_failure_state(
+                            failure_reason=failure_reason,
+                            exception_class="HTTPError",
+                            exception_message=f"HTTP Error {retry_result.status_code}",
+                            status_code=retry_result.status_code,
+                            diagnostics=self._build_diagnostics(
+                                dataset_id=dataset_id,
+                                request_url=retry_url,
+                                status_code=retry_result.status_code,
+                                attempt_number=attempt_number,
+                                target_timestamp=fallback_timestamp,
+                            ),
+                        )
+                        continue
+                    return self._parse_csv_points(
+                        retry_result.body,
+                        dataset_id=dataset_id,
+                        target_timestamp=fallback_timestamp,
+                        bbox=bbox,
+                        url=retry_url,
+                    )
+                if fetch_result.status_code == 404:
+                    failure_reason = "invalid_dataset"
+                elif fetch_result.status_code >= 500:
+                    failure_reason = "upstream_5xx"
+                else:
+                    failure_reason = "upstream_4xx"
+                self._set_failure_state(
+                    failure_reason=failure_reason,
+                    exception_class="HTTPError",
+                    exception_message=f"HTTP Error {fetch_result.status_code}",
+                    status_code=fetch_result.status_code,
+                    diagnostics=self._build_diagnostics(
+                        dataset_id=dataset_id,
+                        request_url=url,
+                        status_code=fetch_result.status_code,
+                        attempt_number=attempt_number,
+                        target_timestamp=target_timestamp,
+                    ),
+                )
+                logger.warning(
+                    "Live chlorophyll fetch returned HTTP error",
+                    extra={
+                        "dataset_id": dataset_id,
+                        "variable_name": self.variable_name,
+                        "trip_date": target_date,
+                        "bbox": [bbox[2], bbox[0], bbox[3], bbox[1]],
+                        "status_code": fetch_result.status_code,
+                        "request_url": url,
+                        "timeout_seconds": self.timeout_seconds,
+                        "error_body": error_body,
+                        "failure_reason": failure_reason,
+                        "attempt_number": attempt_number,
+                    },
+                )
+                continue
+
+            return self._parse_csv_points(
+                fetch_result.body,
+                dataset_id=dataset_id,
+                target_timestamp=target_timestamp,
+                bbox=bbox,
+                url=url,
+            )
+
+        return _MISSING_POINTS
 
     def get_chlorophyll_points(
         self,
@@ -641,6 +967,10 @@ class FallbackChlorophyllProvider:
         self.last_dataset_id: str | None = None
         self.last_cache_key = ""
         self.last_failure_reason = ""
+        self.last_resolved_timestamp = ""
+        self.last_upstream_host = getattr(primary, "last_upstream_host", None)
+        self.last_attempted_urls: list[str] = []
+        self.last_provider_diagnostics: dict[str, str | int | float | bool | None] = {}
 
     def _resolve_primary_source_name(self) -> str:
         return getattr(self.primary, "last_source_name", getattr(self.primary, "source_name", "processed"))
@@ -660,6 +990,21 @@ class FallbackChlorophyllProvider:
     def _resolve_fallback_cache_key(self) -> str:
         return getattr(self.fallback, "last_cache_key", "")
 
+    def _resolve_primary_resolved_timestamp(self) -> str:
+        return getattr(self.primary, "last_resolved_timestamp", "")
+
+    def _resolve_fallback_resolved_timestamp(self) -> str:
+        return getattr(self.fallback, "last_resolved_timestamp", "")
+
+    def _resolve_primary_upstream_host(self) -> str | None:
+        return getattr(self.primary, "last_upstream_host", None)
+
+    def _resolve_primary_attempted_urls(self) -> list[str]:
+        return list(getattr(self.primary, "last_attempted_urls", []) or [])
+
+    def _resolve_primary_provider_diagnostics(self) -> dict[str, str | int | float | bool | None]:
+        return dict(getattr(self.primary, "last_provider_diagnostics", {}) or {})
+
     def get_zone_chlorophyll(
         self,
         zone_id: str,
@@ -673,6 +1018,10 @@ class FallbackChlorophyllProvider:
             self.last_dataset_id = self._resolve_primary_dataset_id()
             self.last_cache_key = self._resolve_primary_cache_key()
             self.last_failure_reason = ""
+            self.last_resolved_timestamp = self._resolve_primary_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return observation
         except (ChlorophyllDataUnavailableError, TimeoutError) as exc:
             self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
@@ -690,6 +1039,10 @@ class FallbackChlorophyllProvider:
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
+            self.last_resolved_timestamp = self._resolve_fallback_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return observation
         except Exception as exc:
             self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
@@ -707,6 +1060,10 @@ class FallbackChlorophyllProvider:
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
+            self.last_resolved_timestamp = self._resolve_fallback_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return observation
 
     def get_chlorophyll_points(
@@ -730,6 +1087,10 @@ class FallbackChlorophyllProvider:
             self.last_dataset_id = self._resolve_primary_dataset_id()
             self.last_cache_key = self._resolve_primary_cache_key()
             self.last_failure_reason = ""
+            self.last_resolved_timestamp = self._resolve_primary_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return points
         except (ChlorophyllDataUnavailableError, TimeoutError) as exc:
             self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
@@ -753,6 +1114,10 @@ class FallbackChlorophyllProvider:
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
+            self.last_resolved_timestamp = self._resolve_fallback_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return points
         except Exception as exc:
             self.last_failure_reason = getattr(self.primary, "last_failure_reason", "") or str(exc)
@@ -776,4 +1141,8 @@ class FallbackChlorophyllProvider:
             self.last_source_name = self._resolve_fallback_source_name()
             self.last_dataset_id = self._resolve_fallback_dataset_id()
             self.last_cache_key = self._resolve_fallback_cache_key()
+            self.last_resolved_timestamp = self._resolve_fallback_resolved_timestamp()
+            self.last_upstream_host = self._resolve_primary_upstream_host()
+            self.last_attempted_urls = self._resolve_primary_attempted_urls()
+            self.last_provider_diagnostics = self._resolve_primary_provider_diagnostics()
             return points

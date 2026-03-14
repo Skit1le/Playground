@@ -307,6 +307,7 @@ class ZonesServiceTestCase(unittest.TestCase):
                 "score_weights",
                 "weighted_score_breakdown",
                 "score_explanation",
+                "source_metadata",
                 "scored_for_species",
                 "scored_for_date",
             },
@@ -326,6 +327,8 @@ class ZonesServiceTestCase(unittest.TestCase):
         self.assertGreater(len(ranked_zones[0].score_explanation.factors), 0)
         self.assertGreater(ranked_zones[0].score_explanation.confidence_score, 0.0)
         self.assertTrue(ranked_zones[0].score_explanation.best_use_case_summary)
+        self.assertEqual(ranked_zones[0].source_metadata.sst.source, "unknown")
+        self.assertEqual(ranked_zones[0].source_metadata.chlorophyll.source, "unknown")
 
     def test_list_ranked_zones_exposes_weights_and_weighted_score_breakdown(self) -> None:
         service = ZonesService(
@@ -1113,6 +1116,46 @@ class ZonesServiceTestCase(unittest.TestCase):
 
         self.assertEqual(signals.chlorophyll_mg_m3, 0.27)
         self.assertEqual(resolved.metadata.chlorophyll_source, "mock_fallback")
+
+    def test_ranked_zone_reflects_fallback_chlorophyll_in_source_metadata_and_confidence(self) -> None:
+        zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
+        signal_store = MockZoneEnvironmentalSignalStore(
+            records={
+                "prime-edge": {
+                    "sea_surface_temp_f": 64.2,
+                    "temp_gradient_f_per_nm": 1.1,
+                    "structure_distance_nm": 2.1,
+                    "chlorophyll_mg_m3": 0.29,
+                    "current_speed_kts": 1.3,
+                    "current_break_index": 0.7,
+                    "weather_risk_index": 0.18,
+                }
+            }
+        )
+        service = ZonesService(
+            zone_repository=FakeZoneRepository([zone]),
+            species_config_repository=FakeSpeciesConfigRepository(make_species_config()),
+            environmental_input_provider=ZoneEnvironmentalInputService(
+                chlorophyll_source=FallbackChlorophyllSource(
+                    primary=ChlorophyllBackedSource(
+                        FakeChlorophyllProvider(ChlorophyllDataUnavailableError("connection_error"))
+                    ),
+                    fallback=SeededChlorophyllSource(signal_store),
+                ),
+                signal_store=signal_store,
+            ),
+        )
+
+        ranked_zone = service.list_ranked_zones("bluefin", date(2026, 6, 18), limit=10)[0]
+
+        self.assertEqual(ranked_zone.source_metadata.chlorophyll.source, "mock_fallback")
+        self.assertTrue(ranked_zone.source_metadata.fallback_used)
+        self.assertGreater(len(ranked_zone.source_metadata.warning_messages), 0)
+        self.assertIsNotNone(ranked_zone.source_metadata.chlorophyll.failure_reason)
+        self.assertLess(ranked_zone.score_explanation.confidence_score, ranked_zone.score)
+        self.assertTrue(
+            any("chlorophyll is estimated" in watchout.lower() for watchout in ranked_zone.score_explanation.watchouts)
+        )
 
     def test_zone_environmental_input_service_falls_back_when_current_provider_fails(self) -> None:
         zone = make_zone(zone_id="prime-edge", name="Prime Edge", distance_nm=61)
